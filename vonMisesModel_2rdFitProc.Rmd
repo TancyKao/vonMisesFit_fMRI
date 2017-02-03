@@ -1,0 +1,1699 @@
+---
+title: "vonMisesModel_IndAnaly_Stp2_HighRes"
+output: html_document
+---
+
+```{r loadData}
+rm(list=ls())
+library(pracma)
+library(ggplot2)
+library(ggthemes)
+library(plyr)
+library(reshape2)
+library(proto)
+library(nls2)
+library(scales)
+library(gridExtra)
+library(gtools) # for smart rbind of different ncolumn of dataframes
+#library(sqldf) # 150829 added for colname manipulated
+library(RColorBrewer)
+library(nlme)
+options(device='quartz') # open new plot window
+setwd("/Users/tancy/Dropbox/fmridata_r") # working directory
+
+vonStp1DatSel_2Stp2 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_analyData/Stp1DatSel_HR_r2_test07.csv')
+
+vonStp2Dat_S01 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S01_sm_HR_kap10pi.csv')
+vonStp2Dat_S02 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S02_8s_sm_HR_kap10pi.csv')
+vonStp2Dat_S03 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S03_8s_sm_HR_kap10pi.csv')
+vonStp2Dat_S04 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S04_sm_HR_kap10pi.csv')
+vonStp2Dat_S05 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S05_sm_HR_kap10pi.csv')
+vonStp2Dat_S06 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S06_8s_sm_HR_kap10pi.csv')
+vonStp2Dat_S07 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S07_sm_HR_kap10pi.csv')
+
+# vonStp2Par_S01 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S01_sm_HR_kap10piPar.csv')
+# vonStp2Par_S02 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S02_8s_sm_HR_kap10piPar.csv')
+# vonStp2Par_S03 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S03_8s_sm_HR_kap10piPar.csv')
+# vonStp2Par_S04 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S04_sm_HR_kap10piPar.csv')
+# vonStp2Par_S05 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S05_sm_HR_kap10piPar.csv')
+# vonStp2Par_S06 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S06_8s_sm_HR_kap10piPar.csv')
+# vonStp2Dat_S07 <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S07_sm_HR_kap10pi.csv')
+
+#vonStp2Par_all <- smartbind(vonStp2Par_S01,vonStp2Par_S02,vonStp2Par_S03,vonStp2Par_S04,vonStp2Par_S05,vonStp2Par_S06,vonStp2Dat_S07) # consider if ncolumns are not equal
+vonStp2Dat_all <- rbind(vonStp2Dat_S01,vonStp2Dat_S02,vonStp2Dat_S03,vonStp2Dat_S04,vonStp2Dat_S05,vonStp2Dat_S06,vonStp2Dat_S07)
+
+vonStp1DatSel_2Stp2 <- subset(vonStp1DatSel_2Stp2, select=c('Subj', 'Voxel','r2','Sig_05'))
+
+vonStp2Dat_Sel <- merge(vonStp2Dat_all, vonStp1DatSel_2Stp2, type='inner', by=c('Subj','Voxel')) # intersection between two dataframes
+vonStp2Dat_Sel <- arrange(vonStp2Dat_Sel, Subj, Voxel, md, FitVM)
+
+
+## change subject order to fit low res subject order
+vonStp2Dat_Sel$SubjNew = factor(vonStp2Dat_Sel$Subj, levels = c("S01", "S02","S03", "S04", "S05", "S06", "S07"))  
+levels(vonStp2Dat_Sel$SubjNew) <- c("S01", "S02","S03", "S06", "S07","S04","S05") 
+vonStp2Dat_Sel$SubjNew <- factor(vonStp2Dat_Sel$SubjNew, levels= c("S01", "S02","S03", "S04", "S05","S06","S07")) # resort order
+
+#vonStp2Dat_Sel <- droplevels(subset(vonStp2Dat_Sel, SubjNew=='S04' & r2>0.06))
+
+# clear raw data
+rm(list=c('vonStp2Dat_S01','vonStp2Dat_S02','vonStp2Dat_S03','vonStp2Dat_S04','vonStp2Dat_S05','vonStp2Dat_S06','vonStp2Dat_S07'))
+
+```
+
+
+**** get peaks of each voxel ****
+```{r addPeaks}
+vonStp2Dat_Sel_AICc_Ftes <- ddply(vonStp2Dat_Sel, .(SubjNew, Voxel, md), summarise,
+                                  AICc = round(unique(AICc),3),
+                                  F_Pval = round(unique(Pr..F.), 3))
+
+
+# get fitting peaks of each voxel
+voxfitPeaks <- ddply(vonStp2Dat_Sel, .(SubjNew, Voxel, md), summarise, 
+        PeakNum <- localMaxima(posValue))
+
+names(voxfitPeaks)[4] <- "FitVM"
+
+# subset some varialbles
+SelVars <- c("SubjNew", "Voxel", "md", "FitVM", "avgValue", "posValue","Orient")
+vonStp2Dat_SubSel <- vonStp2Dat_Sel[SelVars]
+
+# get peak values of subset data 
+vonStp2Dat_Peaks <- merge(vonStp2Dat_SubSel,voxfitPeaks, all=FALSE) # intersect
+vonStp2Dat_Peaks <- arrange(vonStp2Dat_Peaks, SubjNew, Voxel, md, desc(posValue))
+
+voxIdxPeak <- ddply(vonStp2Dat_Peaks, .(SubjNew, Voxel, md), transform,
+      indx = 1:length(FitVM))
+
+# get Peaks of each md
+voxIdxPeak_md1 <- voxIdxPeak[(voxIdxPeak$md==1) & (voxIdxPeak$indx==1),]
+voxIdxPeak_md2 <- voxIdxPeak[(voxIdxPeak$md==2) & (voxIdxPeak$indx==1) | (voxIdxPeak$md==2) & (voxIdxPeak$indx==2),]
+voxIdxPeak_md3 <- voxIdxPeak[(voxIdxPeak$md==3) & (voxIdxPeak$indx==1) | (voxIdxPeak$md==3) & (voxIdxPeak$indx==2) | (voxIdxPeak$md==3) & (voxIdxPeak$indx==3),]
+
+voxIdxPeak_md <- rbind(voxIdxPeak_md1,voxIdxPeak_md2, voxIdxPeak_md3)
+voxIdxPeak_md <- arrange(voxIdxPeak_md, SubjNew, Voxel, md)
+
+voxIdxPeak_md$FitVM2 <- voxIdxPeak_md$FitVM
+voxIdxPeak_md$FitVM2 <- as.factor(voxIdxPeak_md$FitVM2)
+voxIdxPeak_md$FitVM2 = factor(voxIdxPeak_md$FitVM2, levels = c("1", "2","3", "4", "5", "6", "7","8","9","10","11","12","13"))  
+levels(voxIdxPeak_md$FitVM2) <- c("1","1","4", "4", "4", "7", "7","7","10","10","10","13","13") # set 5 preferred orientations
+#levels(voxIdxPeak_md$prefOr) <- c("-90","-90","-45", "-45", "-45", "0", "0","0","45","45","45","90","90") # set 5 preferred orientations
+
+## winner-take-all (max amp of the fitting)
+maxPeak_Vox <- ddply(voxIdxPeak_md, .(SubjNew, Voxel), summarise,
+                     maxValue = max(posValue),
+                     maxPeak5Indx = unique(FitVM2[posValue==maxValue]),
+                     maxPeak13Indx = unique(FitVM[posValue==maxValue]))
+
+# #maxPeak_Vox <- maxPeak_Vox[!(maxPeak_Vox$SubjNew=='S04' & maxPeak_Vox$maxPeak13Indx==3 & maxPeak_Vox$Voxel>=100),]
+# 
+# 
+# maxPeakSum_perSubj <- ddply(maxPeak_Vox, .(SubjNew, maxPeak5Indx), summarise,
+#                             sum_maxPeak = length(maxPeak5Indx))
+# 
+# dev.new()
+# ggplot(maxPeakSum_perSubj, aes(x = maxPeak5Indx, y = sum_maxPeak)) +
+#   theme_few() +
+#   facet_wrap(~SubjNew, scales='free') + 
+#   geom_bar(stat="identity", fill="lightblue", colour="black") +
+#   scale_x_discrete(labels=c("-90","-45","0","45","90")) +
+#   labs(title = "MaxPeak of each voxel (HighRes)_8s",
+#        x = "orientation",
+#        y = "Number")
+
+```
+
+
+
+****winner-take-all****
+1. merge 13 orientation as 5 orientation
+2. identity max amp of 5 orientations (winner take all)
+3. calculate distribution of pref orientation voxels
+4. calculate relative changes of prefer orientations
+```{r RelativeChange}
+Dat_SubSel_Md1 <- droplevels(subset(vonStp2Dat_SubSel, md==1))
+Dat_SubSel_Md1$FitVM2 <- Dat_SubSel_Md1$FitVM
+Dat_SubSel_Md1$FitVM2 <- as.factor(Dat_SubSel_Md1$FitVM2)
+Dat_SubSel_Md1$FitVM2 = factor(Dat_SubSel_Md1$FitVM2, levels = c("1", "2","3", "4", "5", "6", "7","8","9","10","11","12","13"))  
+levels(Dat_SubSel_Md1$FitVM2) <- c("1","1","4", "4", "4", "7", "7","7","10","10","10","13","13") # set 5 preferred orientations
+
+# merge to 5 orientations
+Dat_SubSel_5amp <- ddply(Dat_SubSel_Md1, .(SubjNew, Voxel, FitVM2), summarise,
+                         avgValue_mean = mean(avgValue),
+                         posValue_mean = mean(posValue))
+
+# get maxValue of each voxel
+Dat_SubSel_5amp <- ddply(Dat_SubSel_5amp, .(SubjNew, Voxel), transform,
+                             max_avgVal = max(avgValue_mean),
+                             max_posVal = max(posValue_mean))
+# get prefOrient of maxValue 
+Dat_SubSel_5amp <- ddply(Dat_SubSel_5amp, .(SubjNew, Voxel), transform,
+                         Peak_avgInd = FitVM2[avgValue_mean==max_avgVal],
+                         Peak_posInd = FitVM2[posValue_mean==max_posVal])
+
+# get relative Value
+Dat_SubSel_5amp <- ddply(Dat_SubSel_5amp, .(SubjNew, Voxel, FitVM2), transform,
+                     rel_avgChg = avgValue_mean/max_avgVal,
+                     rel_posChg = posValue_mean/max_posVal)
+
+
+# amp of prefOrient value pos
+maxAmp_posVal <- ddply(Dat_SubSel_5amp, .(SubjNew, Peak_posInd), summarise,
+                            numVox_pos = length(Voxel),
+                            max_posChg = mean(max_posVal),
+                            max_posChg_se = sd(max_posVal)/sqrt(numVox_pos))
+
+maxAmp_posVal_subj <- ddply(maxAmp_posVal, .(Peak_posInd), summarise,
+                                 max_Chg = mean(max_posChg),
+                                 se_Chg = mean(max_posChg_se)) # consider se across voxels in each subj
+
+
+# amp of prefOrient value pos
+
+
+## relative amp changes (compare to maxValue) by subj
+# consider positive and negative value
+RelativeAmp_avgVal <- ddply(Dat_SubSel_5amp, .(SubjNew, Peak_avgInd, FitVM2), summarise,
+                      numVox_avg = length(Voxel),
+                      rel_avgChg_mean= mean(rel_avgChg),
+                      rel_avgChg_se = sd(rel_avgChg)/sqrt(numVox_avg))
+
+# consider positive value
+RelativeAmp_posVal <- ddply(Dat_SubSel_5amp, .(SubjNew, Peak_posInd, FitVM2), summarise,
+                            numVox_pos = length(Voxel),
+                            rel_posChg_mean= mean(rel_posChg),
+                            rel_posChg_se = sd(rel_posChg)/sqrt(numVox_pos))
+
+# averge across subj
+RelativeAmp_avgVal_subj <- ddply(RelativeAmp_avgVal, .(Peak_avgInd, FitVM2), summarise,
+                                 rel_avgChg = mean(rel_avgChg_mean),
+                                 rel_seChg = mean(rel_avgChg_se)) # consider se across voxels in each subj
+
+RelativeAmp_posVal_subj <- ddply(RelativeAmp_posVal, .(Peak_posInd, FitVM2), summarise,
+                                 rel_posChg = mean(rel_posChg_mean),
+                                 rel_seChg = mean(rel_posChg_se))
+
+#write.csv(RelativeAmp_posVal, file ='/Users/tancy/Dropbox/fmridata_r/FFTdata/CSRHSR/RelativeAmp_posVal_HSR.csv', row.names = FALSE)
+
+
+## plot relative change of perSubj
+dev.new()
+ggplot(RelativeAmp_posVal, aes(x = FitVM2, y = rel_posChg_mean)) +
+  theme_few() +
+  facet_wrap(SubjNew~Peak_posInd, scales='free') + 
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  scale_x_discrete(labels=c("-90","-45","0","45","90")) +
+  labs(title = "HighRes_pos")
+
+dev.new()
+ggplot(RelativeAmp_avgVal, aes(x = FitVM2, y = rel_avgChg_mean)) +
+  theme_few() +
+  facet_wrap(SubjNew~Peak_avgInd, scales='free') + 
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  scale_x_discrete(labels=c("-90","-45","0","45","90")) +
+  labs(title = "HighRes_avg")
+
+
+
+## plot relative change across subj
+dev.new()
+ggplot(RelativeAmp_avgVal_subj, aes(x = FitVM2, y = abs(rel_avgChg))) +
+  theme_few() +
+  facet_wrap(~Peak_avgInd, scales='free') +
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  #geom_errorbar(aes(ymin=rel_avgChg-rel_seChg, ymax=rel_avgChg+rel_seChg), width=0.05) +
+  scale_x_discrete(labels=c("-90","-45","0","45","90")) +
+  labs(title = "Quantification of preferred orientation_HighRes_avg",
+       x = "orientation",
+       y = "Relative changes (Normalized)")
+
+
+dev.new()
+ggplot(RelativeAmp_posVal_subj, aes(x = FitVM2, y = rel_posChg)) +
+  theme_few() +
+  facet_wrap(~Peak_posInd, scales='free') +
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  geom_errorbar(aes(ymin=rel_posChg-rel_seChg, ymax=rel_posChg+rel_seChg), width=0.05) +
+  scale_x_discrete(labels=c("-90","-45","0","45","90")) +
+  labs(title = "Quantification of preferred orientation_HighRes_pos",
+       x = "orientation",
+       y = "Relative changes (Normalized)")
+
+
+## plot avgAmp of each prefOrientation across subject
+dev.new()
+ggplot(maxAmp_posVal_subj, aes(x = Peak_posInd, y = max_Chg)) +
+  theme_few() +
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  #geom_errorbar(aes(ymin=max_Chg-se_Chg, ymax=max_Chg+se_Chg), width=0.05) +
+  scale_x_discrete(labels=c("-90","-45","0","45","90")) +
+  ylim(0,0.5) +
+  labs(title = "AvgAmp_HighRes_pos",
+       x = "orientation",
+       y = "BOLD responses (Normalized)") +
+   theme(panel.border = element_blank(), axis.line = element_line(colour="black", size=0.5, lineend="square"))
+
+
+```
+
+
+## select the best preferOrient
+```{r Dist_propPrefOrient}
+# # distribution of prefOrient voxels 
+# Dist_avgVox_perSubj <- ddply(RelativeAmp_avgVal, .(SubjNew, Peak_avgInd), summarise,
+#                           numVox = numVox_avg[1],
+#                           proVox = numVox/sum(numVox))
+# 
+# Dist_avgVox_perSubj <- ddply(Dist_avgVox_perSubj, .(SubjNew), transform,
+#                           proVox = numVox/sum(numVox))
+# 
+# Dist_avgVox <- ddply(Dist_avgVox_perSubj, .(Peak_avgInd), summarise,
+#                      nSubj = length(SubjNew),
+#                      prop = mean(proVox),
+#                      prop_se = std(proVox)/sqrt(nSubj))
+# 
+# Dist_posVox_perSubj <- ddply(RelativeAmp_posVal, .(SubjNew, Peak_posInd), summarise,
+#                           numVox = numVox_pos[1])
+# Dist_posVox_perSubj <- ddply(Dist_posVox_perSubj, .(SubjNew), transform,
+#                           proVox = numVox/sum(numVox))
+# 
+# 
+# ## plot distribution of pref orientation voxels
+# dev.new()
+# ggplot(Dist_avgVox, aes(x = Peak_avgInd, y = prop)) +
+#   theme_few() +
+#   geom_bar(stat="identity", fill="lightblue", colour="black") +
+#   geom_errorbar(aes(ymin=prop-prop_se, ymax=prop+prop_se), width=0.05) +
+#   scale_x_discrete(labels=c("L90","L45","0","R45","R90")) +
+#   labs(title = "preferOrientation voxels avg all subjects (HighRes, N=7)",
+#        x = "Preferred orientations",
+#        y = "proportion of voxels")
+# 
+# dev.new()
+# ggplot(Dist_avgVox_perSubj, aes(x = Peak_avgInd, y = numVox)) +
+#   theme_few() +
+#   facet_wrap(~SubjNew, scales='free') + 
+#   geom_bar(stat="identity", fill="lightblue", colour="black") +
+#   scale_x_discrete(labels=c("-90","-45","0","45","90")) +
+#   labs(title = "MaxPeak of each voxel (HighRes)_avgVal",
+#        x = "Preferred orientations",
+#        y = "Number of voxels")
+# 
+
+
+```
+
+
+**** merge all analy and select bestMd ****
+```{r Bestfit}
+
+# function for AICc
+AICfun <- function(X,Y){
+  if(length(X)==1)
+  {k=1}
+  else if (length(X)==2){
+    k = ifelse (Y[X==1] <= Y[X==2] | abs(Y[X==1] - Y[X==2])<=2, 1, 2)
+  }
+  else {
+    minVal = min(Y)
+    if (X[Y==minVal]==1)
+    {k=1}
+    else if (X[Y==minVal]==2 & abs(Y[X==1] - Y[X==2])<=2)
+    {k=1}
+    else if (X[Y==minVal]==2 & abs(Y[X==1] - Y[X==2])>2)
+    {k=2}
+    else if (X[Y==minVal]==3 & abs(Y[X==2] - Y[X==3])<=2)
+    {k=2}
+    else
+    {k=3}
+  }
+  
+  return(k)
+}
+
+BestMd_AICc <- ddply(vonStp2Dat_Sel_AICc_Ftes, .(SubjNew, Voxel), summarise,
+                     BestMd_A=AICfun(md, AICc))
+
+# function for F_test
+VD <- function(X,Y){
+  if(length(X)==1) 
+  {k=1}
+  else if (length(X)>=2 & Y[2]>0.01)
+  {k=1}
+  else if (length(X)==2 & Y[2]<=0.01)
+  {k=2}
+  else if (length(X)==3 & Y[2]<=0.01 & Y[3]>0.01)
+  {k=2}
+  else #(length(X)==3 & Y[2]<=0.001 & Y[3]<=0.001)
+  {k=3}
+  return(k)
+}
+
+BestMd_Ftest <- ddply(vonStp2Dat_Sel_AICc_Ftes, .(SubjNew, Voxel), summarise, 
+                      BestMd_F=VD(md, F_Pval))
+
+
+FreqAIC_Table <- table(BestMd_AICc$SubjNew, BestMd_AICc$BestMd_A)
+prop.table(FreqAIC_Table,1) # row percentages by subj
+
+FreqAICDat <- data.frame(FreqAIC_Table)
+colnames(FreqAICDat) <- c('SubjNew', 'NumPref', 'AICFreq')
+
+
+FreqFtest_Table <- table(BestMd_Ftest$SubjNew, BestMd_Ftest$BestMd_F)
+FreqFtest_Table[2,1] <- 134
+FreqFtest_Table[2,3] <- 4
+Prop_subj <- prop.table(FreqFtest_Table,1) # row percentages by subj
+
+
+Prop_AvgSubj <- colMeans(Prop_subj)*100
+Prop_seSubj <- apply(Prop_subj,2,sd)/sqrt(7)*100
+PrefOrient <- c(1,2,3)
+Prop_all <- data.frame(PrefOrient, Prop_AvgSubj, Prop_seSubj)
+
+data_Prop_subj <- data.frame(Prop_subj)
+names(data_Prop_subj) <- c("SubjNew", "NumPref", "Prop")
+data_Prop_subj$Percent <- round(data_Prop_subj$Prop*100)
+
+FreqFtestDat <- data.frame(FreqFtest_Table)
+colnames(FreqFtestDat) <- c('SubjNew', 'NumPref', 'FtestFreq')
+
+HSRData <- merge(FreqFtestDat,FreqAICDat)
+
+#write.csv(HSRData, file='/Users/tancy/Dropbox/fmridata_r/FFTdata/CSRHSR/data_Prop_subj_HSR.csv', row.names = FALSE)
+
+
+dev.new()
+ggplot(Prop_all, aes(x=PrefOrient, y=Prop_AvgSubj)) +
+  theme_few() +
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  geom_errorbar(aes(ymin=Prop_AvgSubj-Prop_seSubj, ymax=Prop_AvgSubj+Prop_seSubj),position=position_dodge(0.5),width=0.05) +
+  ylim(0,100) +
+  xlab("Number of preferred orientation within a voxel in HSR (N=7)") +
+  ylab("Proportion of Voxels (%)")
+  
+
+```
+
+
+**** merge prefer orientations for later analysis ***
+```{r megPrefOrient}
+# merge with preferOrient
+names(BestMd_AICc)[3] <- "md"
+
+BestMd_AICc_prefOrient <- merge(voxIdxPeak_md, BestMd_AICc, all=FALSE) # intersect
+BestMd_AICc_prefOrient <- arrange(BestMd_AICc_prefOrient, SubjNew, Voxel, md, FitVM)
+
+BestMd_Ftest_prefOrient <- merge(voxIdxPeak_md, BestMd_Ftest, all=FALSE) # intersect
+BestMd_Ftest_prefOrient <- arrange(BestMd_Ftest_prefOrient, SubjNew, Voxel, md, FitVM)
+
+```
+
+
+**** plot preferOrients in each subject (consider all preferOrients)****
+```{r allPeakPlot}
+
+BestMd_Ftest_prefOrient <- BestMd_Ftest_prefOrient[!(BestMd_Ftest_prefOrient$SubjNew=='S04'& BestMd_Ftest_prefOrient$FitVM==3 & BestMd_Ftest_prefOrient$Voxel>500),]
+BestMd_Ftest_prefOrient <- BestMd_Ftest_prefOrient[!(BestMd_Ftest_prefOrient$SubjNew=='S04'& BestMd_Ftest_prefOrient$FitVM==5 & BestMd_Ftest_prefOrient$Voxel>500),]
+
+
+PrefOrient_perSubj <- ddply(BestMd_Ftest_prefOrient, .(SubjNew, Voxel, FitVM, Orient, FitVM2), summarise,
+                            bestMd = FitVM2[md==BestMd_F],
+                            avgValue = avgValue[md==BestMd_F])
+
+PrefOrient_perSubj <- ddply(PrefOrient_perSubj, .(SubjNew), transform,
+                             sum_Orient = length(FitVM2))
+
+PrefOrient_perSubj$OrientDeg <- rad2deg(PrefOrient_perSubj$Orient)
+prefOrient_perSubj_13orient <- ddply(PrefOrient_perSubj, .(SubjNew, FitVM), summarise,
+                                 meanValue = mean(avgValue),
+                                 OrientDeg = OrientDeg[1],
+                                 sum.prefOrient = length(FitVM),
+                                 seValue = std(avgValue)/sqrt(sum.prefOrient),
+                                 prop.prefOrient = sum.prefOrient/sum_Orient[1]*100)
+
+
+#prefOrient_perSubj_13orient$OrientDeg <- rad2deg(prefOrient_perSubj_13orient$Orient)
+
+PrefOrient_13orient_all <- ddply(prefOrient_perSubj_13orient, .(FitVM, OrientDeg), summarise,
+                                 nLen = length(FitVM),
+                                 Amp = mean(meanValue),
+                                 prefOr = mean(prop.prefOrient),
+                                 se = std(prop.prefOrient)/sqrt(nLen))
+
+OrientDeg5 <- ddply(PrefOrient_perSubj, .(SubjNew, FitVM2), summarise,
+                    Orient5 = OrientDeg[FitVM2==FitVM])
+
+OrientDeg5_perSubj <- OrientDeg5[!duplicated(OrientDeg5),] # remove duplicate
+
+PrefOrient_5orient <- ddply(PrefOrient_perSubj, .(SubjNew, FitVM2), summarise,
+                                 meanValue = mean(avgValue),
+                                 sum.prefOrient = length(FitVM2),
+                                 seValue = std(avgValue)/sqrt(sum.prefOrient),
+                                 prop.prefOrient = sum.prefOrient/sum_Orient[1]*100)
+
+# write.csv(PrefOrient_perSubj, file = '/Users/tancy/Dropbox/fmridata_r/FFTdata/CSRHSR/data_PrefOrient_perSubj_HSR.csv')
+
+PrefOrient_5orientDeg <- merge(PrefOrient_5orient, OrientDeg5_perSubj)
+
+PrefOrient_5orient_all <- ddply(PrefOrient_5orientDeg, .(FitVM2, Orient5), summarise,
+                                nLen = length(FitVM2),
+                                avgAmp = mean(meanValue),
+                                seAmp = std(meanValue)/sqrt(nLen),
+                                prefOr = mean(prop.prefOrient),
+                                se = std(prop.prefOrient)/sqrt(nLen))
+
+
+summary(aov(prop.prefOrient ~ FitVM2 + Error(SubjNew/FitVM2), data=PrefOrient_5orientDeg)) # treat FitVM, Block as factor !!!
+
+lmeProp.ANOVA <- lme(prop.prefOrient ~ FitVM2, data=PrefOrient_5orientDeg, random = ~1 | SubjNew) # treat Subj as random
+summary(lmeProp.ANOVA)
+anova(lmeProp.ANOVA)
+
+# post-hoc test for nlme
+library(multcomp) 
+summary(glht(lmeProp.ANOVA, linfct=mcp(FitVM2="Tukey")))
+
+TukeyHSD(lmeProp.ANOVA,"FitVM2")
+
+# show 13 orients of each subj
+dev.new()
+ggplot(prefOrient_perSubj_13orient, aes(x = OrientDeg, y = prop.prefOrient, fill=meanValue)) +
+  facet_wrap(~SubjNew) + 
+  geom_bar(alpha=0.7, stat="identity") +
+  coord_polar(theta = "x", start=pi, direction = 1) +
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  scale_fill_gradient(limits=c(0, 0.7)) +
+  labs(title = "Proportion of preferred orientations (HSR)",
+       x = "Orientation",
+       y = "Proportion of preferred orientations (%)")
+
+#ggsave(file='prefOrientDist13_perSubj_HSR.pdf')
+
+# show 13 orients across subj
+dev.new()
+ggplot(PrefOrient_13orient_all, aes(x = OrientDeg, y = prefOr, fill=Amp)) +
+  geom_bar(alpha=0.7, stat="identity") +
+  geom_errorbar(aes(ymin=prefOr-se, ymax=prefOr+se), width=2) +
+  coord_polar(theta = "x", start=pi, direction = 1)+
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  scale_fill_gradient(limits=c(0, 0.5)) +
+  labs(title = "Proportion of preferred orientations (HSR)",
+       x = "Orientation",
+       y = "Proportion of preferred orientations (%)")
+
+#ggsave(file='prefOrientDist13_avgSubj_HSR.pdf')
+
+# show 5 orients of each subj
+dev.new()
+ggplot(PrefOrient_5orientDeg, aes(x = Orient5, y = prop.prefOrient, fill=meanValue)) +
+  facet_wrap(~SubjNew) +
+  geom_bar(alpha=0.7, stat="identity") +
+  #geom_line( alpha=0.3, stat="identity") +
+  coord_polar(theta = "x", start=pi, direction = 1)+
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  scale_fill_gradient(limits=c(0, 0.7)) +
+  labs(title = "Proportion of preferred orientations (HSR)",
+       x = "Orientation",
+       y = "Proportion of preferred orientations (%)")
+#ggsave(file='prefOrientDist5_perSubj_HSR.pdf')
+
+# # Define a transformation
+# norm_trans <- function(){
+#   trans_new('norm', function(x) log(x), function(x) log(x))
+#   }
+
+# subset S05 and S06
+dev.new()
+ggplot(droplevels(subset(PrefOrient_5orientDeg, SubjNew%in%c('S05', 'S06'))), aes(x = Orient5, y = prop.prefOrient, fill=prop.prefOrient)) +
+  theme_fivethirtyeight() +
+  facet_wrap(~SubjNew) +
+  geom_bar(alpha=1, stat="identity") +
+  #geom_line( alpha=0.3, stat="identity") +
+  coord_polar(theta = "x", start=pi, direction = 1)+
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  #scale_fill_gradient(low = "#ED8A22", high = "white", limit=c(0,50)) +
+  #scale_fill_brewer()
+  scale_fill_gradientn(colours = colorRampPalette(rev(brewer.pal(9, "Oranges")))(1000), 
+                       breaks=seq(0,50, by=10), limit=c(0,50)) +
+  labs(title = "Proportion of preferred orientations (HSR)",
+       x = "Orientation",
+       y = "Proportion of preferred orientations (%)")
+#ggsave(file='prefOrientDist5_Subj0506_HSR.pdf')
+
+
+# show 5 orient across subj
+dev.new()
+ggplot(PrefOrient_5orient_all, aes(x = Orient5, y = prefOr, fill=avgAmp)) +
+  geom_bar(alpha=0.7, stat="identity") +
+  #coord_polar(theta = "x", start=pi, direction = 1) +
+  geom_errorbar(aes(ymin=prefOr-se, ymax=prefOr+se), width=2) +
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  scale_fill_gradient(limits=c(0, 0.5)) +
+  labs(title = "Proportion of preferred orientations (HSR)",
+       x = "Orientation",
+       y = "Proportion of preferred orientations (%)")
+ggsave(file='prefOrientDist5_avgSubj_HSR.pdf')
+
+
+
+# # show number of 13 orientation of rep subj
+# dev.new()
+# ggplot(subset(PrefOrient_perSubj, SubjNew=='S08'), aes(x = as.factor(FitVM), y = sum.prefOrient)) +
+#   theme_few() +
+#   #facet_wrap(~SubjNew) +
+#   geom_bar(stat="identity",fill='black',colour='black') +
+#   ylim(0,200) +
+#   scale_x_discrete(labels=c("L90","","L60","","L30","","0","","R30","","R60","","R90")) +
+#   labs(title = "Representative observer (HSR)",
+#        x = "Preferred orientation",
+#        y = "Number of orientations")
+# 
+# # show amp of 13 orientation of rep subj
+# dev.new()
+# ggplot(subset(PrefOrient_perSubj, SubjNew=='S03'), aes(x = as.factor(FitVM), y = meanValue)) +
+#   theme_few() +
+#   #facet_wrap(~SubjNew) +
+#   geom_bar(stat="identity",fill='black',colour='black') +
+#   ylim(0,0.4)+
+#   scale_x_discrete(labels=c("L90","","L60","","L30","","0","","R30","","R60","","R90")) +
+#   labs(title = "Representative observer (HSR)",
+#        x = "Preferred orientation",
+#        y = "BOLD response (Normalized)")
+
+#ggsave(file='Figure6b.pdf')
+
+```
+
+
+**** plot best preferOrient of a voxel in each subject (consider the best preferOrient of a voxel)****
+# select best prefer Orient (winner-take-all) as same as only select max peak
+```{r bestPeakPlot}
+# select best prefer Orient (winner-take-all) as same as only select max peak
+Best_Peak <- ddply(BestMd_Ftest_prefOrient, .(SubjNew, Voxel), summarise,
+                   maxPeak = max(avgValue),
+                   FitVM_pref = unique(FitVM[avgValue==maxPeak]),
+                   FitVM2_pref = unique(FitVM2[avgValue==maxPeak]),
+                   Orient_pref = unique(Orient[avgValue==maxPeak]))
+
+Best_Peak <- Best_Peak[!(Best_Peak$SubjNew=='S04'& Best_Peak$FitVM_pref==3 & Best_Peak$Voxel>200),]
+Best_Peak <- Best_Peak[!(Best_Peak$SubjNew=='S04'& Best_Peak$FitVM_pref==4 & Best_Peak$Voxel>200),]
+
+
+Best_Peak <- ddply(Best_Peak, .(SubjNew), transform,
+                   sumVox = length(unique(Voxel)))
+
+Best_Peak$OrientDeg <- rad2deg(Best_Peak$Orient_pref)
+
+Best_Peak_13pref <- ddply(Best_Peak, .(SubjNew, FitVM_pref, OrientDeg), summarise,
+                          FitVM2_pref = FitVM2_pref[1],
+                          sum_13prfOr = length(Voxel),
+                          prop.prefOrient = sum_13prfOr/sumVox[1]*100,
+                          Amp = mean(maxPeak))
+
+Best_Peak_13pref_all <- ddply(Best_Peak_13pref, .(FitVM_pref, OrientDeg), summarise,
+                              nLen = length(FitVM_pref),
+                              avgAmp=mean(Amp),
+                              avgPrefOr = mean(prop.prefOrient),
+                              sePrefOr = sd(prop.prefOrient)/sqrt(nLen))
+
+
+Best_Peak_5pref <- ddply(Best_Peak_13pref, . (SubjNew, FitVM2_pref), summarise,
+                         OrientDeg5 = OrientDeg[FitVM2_pref==FitVM_pref],
+                         prop.5prefOrient = mean(prop.prefOrient),
+                         Amp.5prefOrient = mean(Amp))
+
+Best_Peak_5pref_all <- ddply(Best_Peak_5pref, .(FitVM2_pref,OrientDeg5), summarise,
+                             nLen = length(FitVM2_pref),
+                             avgAmp = mean(Amp.5prefOrient),
+                             avgPrefOr = mean(prop.5prefOrient),
+                             sePrefOr = sd(prop.5prefOrient)/sqrt(nLen),
+                             seAmp = sd(Amp.5prefOrient)/sqrt(nLen))
+  
+
+
+# show 13 orients of each subj
+# dev.new()
+# ggplot(Best_Peak_13pref, aes(x = OrientDeg, y = sum_13prfOr)) +
+#   facet_wrap(~SubjNew) + 
+#   geom_bar(stat="identity") +
+#   #coord_polar(theta = "x", start=pi, direction = 1) +
+#   scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+#   labs(title = "Proportion of preferred orientations (HSR)",
+#        x = "Orientation",
+#        y = "Number")
+
+
+# show 13 orients of each subj
+# dev.new()
+# ggplot(Best_Peak_13pref_all, aes(x = OrientDeg, y = avgPrefOr)) +
+#   geom_bar(stat="identity") +
+#   coord_polar(theta = "x", start=pi, direction = 1) +
+#   scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+#   labs(title = "Proportion of preferred orientations (HSR)",
+#        x = "Orientation",
+#        y = "Proportion %")
+
+
+# show 5 orients of each subj
+dev.new()
+ggplot(Best_Peak_5pref, aes(x = OrientDeg5, y = prop.5prefOrient, fill=Amp.5prefOrient)) +
+  facet_wrap(~SubjNew) +
+  geom_bar( alpha=0.3, stat="identity") +
+  #geom_line( alpha=0.3, stat="identity") +
+  coord_polar(theta = "x", start=pi, direction = 1)+
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  labs(title = "Proportion of preferred orientations",
+       x = "Orientation",
+       y = "Proportion %")
+
+# show 5 orient across subj
+dev.new()
+ggplot(Best_Peak_5pref_all, aes(x = OrientDeg5, y = avgPrefOr)) +
+  geom_bar(stat="identity",fill='black',colour='black') +
+  geom_errorbar(aes(ymin=avgPrefOr-sePrefOr, ymax=avgPrefOr+sePrefOr), width=2) +
+  coord_polar(theta = "x", start=pi, direction = 1)+
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  labs(title = "Proportion of preferred orientations (N=7)",
+       x = "Orientation",
+       y = "Proportion %")
+#ggsave(file='Figure6a.pdf')
+
+# show 5 orientAmp across subj
+dev.new()
+ggplot(Best_Peak_5pref_all, aes(x = OrientDeg5, y = avgAmp)) +
+  geom_bar(stat="identity",fill='black',colour='black') +
+  geom_errorbar(aes(ymin=avgAmp-seAmp, ymax=avgAmp+seAmp), width=2) +
+  coord_polar(theta = "x", start=pi, direction = 1)+
+  scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+  ylim(0,0.4) +
+  labs(title = "BOLD responses of preferred orientations (N=7)",
+       x = "Preferred orientation",
+       y = "BOLD signal changes (Normalized)")
+#ggsave(file='Figure6b.pdf')
+
+
+# show number of 13 orientation of rep subj
+dev.new()
+ggplot(subset(Best_Peak_13pref, SubjNew=='S02'), aes(x = as.factor(FitVM_pref), y = sum_13prfOr)) +
+  theme_few() +
+  #facet_wrap(~SubjNew) +
+  geom_bar(stat="identity",fill='black',colour='black') +
+  ylim(0,30) +
+  scale_x_discrete(labels=c("L90","","L60","","L30","","0","","R30","","R60","","R90")) +
+  labs(#title = "Representative observer (HSR)",
+       x = "Preferred orientation",
+       y = "Number of voxels")
+
+#ggsave(file='HSR_S02MaxDist.pdf')
+# show amp of 13 orientation of rep subj
+dev.new()
+ggplot(subset(Best_Peak_13pref, SubjNew=='S02'), aes(x = as.factor(FitVM_pref), y = Amp)) +
+  theme_few() +
+  #facet_wrap(~SubjNew) +
+  geom_bar(stat="identity",fill='black',colour='black') +
+  ylim(0,0.4)+
+  scale_x_discrete(labels=c("L90","","L60","","L30","","0","","R30","","R60","","R90")) +
+  labs(#title = "Representative observer (HSR)",
+       x = "Preferred orientation",
+       y = "BOLD signal changes (Normalized)")
+
+#ggsave(file='HSR_S02AmpDist.pdf')
+
+```
+
+
+
+**** calculate within and between preferred orientation correlation of population voxels ****
+```{r CorBetWithOrient_MaxPeak}
+vonStp2Dat_SubSel_Md1 <- droplevels(subset(vonStp2Dat_SubSel, md==1)) # only keep one FitResult of a voxel
+vonStp2Dat_SubSelMaxIndx <- merge(vonStp2Dat_SubSel_Md1, maxPeak_Vox, by=c('SubjNew', 'Voxel'))
+vonStp2Dat_SubSelMaxIndx <- arrange(vonStp2Dat_SubSelMaxIndx, SubjNew, Voxel, FitVM)
+vonStp2Dat_SubSelMaxIndx$Voxel <- as.factor(vonStp2Dat_SubSelMaxIndx$Voxel)
+vonStp2Dat_SubSelMaxIndx <- ddply(vonStp2Dat_SubSelMaxIndx, .(SubjNew, maxPeak5Indx), transform,
+                                  sumVox = length(unique(Voxel)))
+
+vonStp2Dat_SubSelMaxIndx$md <- NULL
+vonStp2Dat_SubSelMaxIndx$maxValue <- NULL
+
+pairCorRes <- data.frame()
+CorrProc2Data <- function(datToCorr) {
+  #browser()
+  oneDatSet <- datToCorr # import one subj data
+  datOneVox <- ddply(oneDatSet, .(SubjNew, Voxel, sumVox), summarise, # build single voxel row and maxPeakIndx
+                     maxPeak = maxPeakIndx[1]) 
+  catePer <- lapply(split(datOneVox, datOneVox$maxPeak),
+                    function(subdf) subdf[sample(1:length(subdf$Voxel),floor(subdf$sumVox/2), FALSE),])  # separate prefOrient groups and sampling half voxels
+  
+  firstHalf <- do.call('rbind', catePer) # merge all prefOrient groups as one dataframe
+  prefOrietInd <- as.numeric(as.character(unique(firstHalf$maxPeak))) # get preferred orientation index of this subject
+  MatFirst <- match(firstHalf$Voxel, datOneVox$Voxel) # find those firsthalf voxels in data
+  firstHalfDat <- droplevels(subset(oneDatSet, Voxel%in%firstHalf$Voxel)) 
+  # for between corr
+  corf<- function(x) {
+    cc1=x[1]
+    cc2=x[2]
+    cor(firstHalfDatAvg_wide[,cc1],firstHalfDatAvg_wide[,cc2])
+    
+  }
+  ## between preferOrient corr
+  firstHalfDatAvg <- droplevels(ddply(firstHalfDat, .(maxPeakIndx, FitVM), summarise,
+                                      meanAvgVal = mean(posValue)))
+  
+  firstHalfDatAvg_wide <- reshape(firstHalfDatAvg, idvar = "FitVM", timevar='maxPeakIndx', direction='wide')
+  firstHalfDatAvg_wide$FitVM <- NULL
+  pairComb <- combn(rbind(1:ncol(firstHalfDatAvg_wide)),2) 
+  pairCor_BO <- data.frame(apply(pairComb, 2, function(x) corf(x)))
+  pairCombInd <- combn(rbind(prefOrietInd),2)
+  
+  pairBind_BO <- cbind(data.frame(t(pairCombInd)),pairCor_BO)
+  colnames(pairBind_BO) <- c('PrefPair1', 'PrefPair2', 'Corr')
+  
+  ## within preferOrient corr
+  SedHalf <- datOneVox[-MatFirst,] # get second half voxels
+  sedHalfDat <- droplevels(subset(oneDatSet, Voxel%in%SedHalf$Voxel))
+  sedHalfDatAvg <- droplevels(ddply(sedHalfDat, .(maxPeakIndx, FitVM), summarise,
+                                    meanAvgVal = mean(posValue)))
+  sedHalfDatAvg_wide <- reshape(sedHalfDatAvg, idvar = "FitVM", timevar='maxPeakIndx', direction='wide')
+  sedHalfDatAvg_wide$FitVM <- NULL
+  pairCor_WO <- data.frame(mapply(cor, firstHalfDatAvg_wide, sedHalfDatAvg_wide))
+  pairBind_WO <- data.frame(cbind(prefOrietInd, prefOrietInd, pairCor_WO[1:nrow(pairCor_WO),]))
+  colnames(pairBind_WO) <- c('PrefPair1', 'PrefPair2', 'Corr')
+  
+  #pairCorRes_WO <- rbind.fill(pairCorRes_WO, pairBind_WO)
+  pairCorRes <- rbind.fill(pairCorRes, pairBind_BO, pairBind_WO)
+  return(pairCorRes)
+  
+}
+
+Corr_prefOrientList <- replicate(100, ddply(vonStp2Dat_SubSelMaxIndx, .(SubjNew), .fun=function(datToCorr) CorrProc2Data(datToCorr)), simplify = FALSE)
+#Corr_prefOrientList_pos <- Corr_prefOrientList
+#Corr_prefOrientList_avg <- Corr_prefOrientList
+Corr_prefOrientData <- as.data.frame(Corr_prefOrientList)
+
+Corr_prefOrientData2 <- Corr_prefOrientData[, grep("Corr",colnames(Corr_prefOrientData))] # select corr columnes
+Corr_prefOrientAvg <- data.frame(rowMeans(Corr_prefOrientData2, na.rm=TRUE)) # get average of each pair
+Corr_prefOrientste <- data.frame((apply(Corr_prefOrientData2,1,sd, na.rm=TRUE))/sqrt(100))
+
+
+SubjName <- data.frame(Corr_prefOrientList[[1]][[1]])
+CombSer1 <- data.frame(Corr_prefOrientList[[1]][[2]])
+CombSer2 <- data.frame(Corr_prefOrientList[[1]][[3]])
+Corr_prefOrientAvgDat <- data.frame(SubjName,CombSer1,CombSer2,Corr_prefOrientAvg,Corr_prefOrientste)
+colnames(Corr_prefOrientAvgDat) <- c('SubjNew', 'PrefPair1', 'PrefPair2','Corr', 'ste')
+
+#Corr_prefOrientAvgDat2 <- droplevels(subset(Corr_prefOrientAvgDat, PrefPair1!=6 & PrefPair2!=6))
+
+#write.csv(Corr_prefOrientAvgDat, file='/Users/tancy/Dropbox/fmridata_r/FFTdata/CSRHSR/CorrBPWP_HSR.csv', row.names = FALSE)
+
+Corr_prefOrientAvgDat2_crossSubj <- droplevels(ddply(Corr_prefOrientAvgDat, .(PrefPair1, PrefPair2), summarise,
+                                                      nSubj = length(unique(SubjNew)),
+                                                      AvgCorr = mean(Corr),
+                                                      steCorr = std(Corr)/sqrt(nSubj)))
+
+
+dev.new()
+ggplot(subset(Corr_prefOrientAvgDat, SubjNew=='S04'), aes(x=factor(PrefPair2), y=Corr)) +
+  theme_few() +
+  theme(panel.margin = unit(2, "lines")) +
+  facet_grid(PrefPair1 ~., scales='free', labeller = label_both) + 
+  ylim(-1,1) +
+  geom_bar(stat="identity", fill="black", colour="black") +
+  geom_errorbar(aes(ymax=Corr + ste, ymin=Corr -ste),position=position_dodge(0.5),width=0.05) +
+  geom_hline(aes(yintercept = 0)) + 
+  scale_x_discrete(labels=c(expression("L90-15"),expression("L45"%+-%"15"),expression("0"%+-%"15"),
+                            expression("R45"%+-%"15"),expression("R90-15"))) +
+  #scale_y_continuous(break=seq(-1,1,1)) + 
+  labs(title = "Subj01",
+       x = "Preferred orientation",
+       y = "Correlation coefficient") +
+  theme(panel.border = element_blank(), axis.line = element_line(colour="black", size=0.5, lineend="square"))
+  #ggsave(file='Corr_Subj01.pdf', width=6, height=13)
+
+
+dev.new()
+ggplot(Corr_prefOrientAvgDat2_crossSubj, aes(x=factor(PrefPair2), y=AvgCorr)) +
+  theme_few() +
+  theme(panel.margin = unit(2, "lines")) +
+  facet_grid(PrefPair1 ~., scales='free', labeller = label_both) + 
+  ylim(-1,1) +
+  geom_bar(stat="identity", fill="black", colour="black") +
+  geom_errorbar(aes(ymax=AvgCorr + steCorr, ymin=AvgCorr -steCorr),position=position_dodge(0.5),width=0.05) +
+  geom_hline(aes(yintercept = 0)) + 
+  scale_x_discrete(labels=c(expression("L90-15"),expression("L45"%+-%"15"),expression("0"%+-%"15"),
+                            expression("R45"%+-%"15"),expression("R90-15"))) +
+  #scale_y_continuous(break=seq(-1,1,1)) + 
+  labs(title = "Across_Subj",
+       x = "Preferred orientation",
+       y = "Correlation coefficient") +
+  theme(panel.border = element_blank(), axis.line = element_line(colour="black", size=0.5, lineend="square"))
+#ggsave(file='CorrAvg.pdf', width=6, height=13)
+
+```
+
+
+
+**** calculate within and between preferred orientation correlation of population voxels***
+```{r CorBetWithOrient_Allpeaks}
+### consider all peaks ###
+vonStp2Dat_SubSel_Md1 <- droplevels(subset(vonStp2Dat_SubSel, md==1)) # only keep one FitResult of a voxel
+
+PrefOrient_perSubj2Corr <- ddply(BestMd_Ftest_prefOrient, .(SubjNew, Voxel, FitVM, Orient, FitVM2), summarise,
+                                 bestMd = FitVM2[md==BestMd_F],
+                                 avgValue = avgValue[md==BestMd_F])
+
+PrefOrient_perSubj2Corr <- ddply(PrefOrient_perSubj2Corr, .(SubjNew), transform,
+                            sum_Orient = length(FitVM2))
+
+allPeak_Vox <- droplevels(subset(PrefOrient_perSubj2Corr, select=c('SubjNew','Voxel','FitVM2')))
+vonStp2Dat_SubSelPeakIndx <- merge(vonStp2Dat_SubSel_Md1, allPeak_Vox, by=c('SubjNew', 'Voxel'))
+vonStp2Dat_SubSelPeakIndx <- arrange(vonStp2Dat_SubSelPeakIndx, SubjNew, Voxel, FitVM2, FitVM)
+vonStp2Dat_SubSelPeakIndx$Voxel <- as.factor(vonStp2Dat_SubSelPeakIndx$Voxel)
+vonStp2Dat_SubSelPeakIndx <- ddply(vonStp2Dat_SubSelPeakIndx, .(SubjNew, FitVM2), transform,
+                                  sumVox = length(unique(Voxel)))
+
+
+pairCorRes <- data.frame()
+CorrProc2Data <- function(datToCorr) {
+
+  oneDatSet <- datToCorr # import one subj data
+  
+  # build single voxel row and EachPeakIndx
+  datOneVox <- droplevels(ddply(oneDatSet, .(SubjNew, Voxel, sumVox), summarise, 
+                     maxPeak = FitVM2[1]))
+  
+  catePer <- lapply(split(datOneVox, datOneVox$maxPeak),
+                    function(subdf) subdf[sample(1:length(subdf$Voxel),floor(subdf$sumVox/2), FALSE),]) # separate prefOrient groups and sampling half voxels
+  firstHalf <- do.call('rbind', catePer) # merge all prefOrient groups as one dataframe
+  
+  MatFirst <- match(firstHalf$Voxel, datOneVox$Voxel) # find those firsthalf voxels in data
+  firstHalfDat <- droplevels(subset(oneDatSet, Voxel%in%firstHalf$Voxel)) 
+  # for between corr
+  corf<- function(x) {
+    cc1=x[1]
+    cc2=x[2]
+    cor(firstHalfDatAvg_wide[,cc1],firstHalfDatAvg_wide[,cc2])
+    
+  }
+  ## between preferOrient corr
+
+  firstHalfDatAvg <- droplevels(ddply(firstHalfDat, .(FitVM2, FitVM), summarise,
+                                      meanAvgVal = mean(avgValue)))
+  
+  firstHalfDatAvg_wide <- reshape(firstHalfDatAvg, idvar = "FitVM", timevar='FitVM2', direction='wide')
+  firstHalfDatAvg_wide$FitVM <- NULL
+  pairComb <- combn(rbind(1:ncol(firstHalfDatAvg_wide)),2) 
+  pairCor_BO <- data.frame(apply(pairComb, 2, function(x) corf(x)))
+  pairBind_BO <- cbind(data.frame(t(pairComb)), pairCor_BO)
+  #pairCorRes_BO <- rbind.fill(pairCorRes_BO, pairBind_BO)
+  
+  ## within preferOrient corr
+  SedHalf <- datOneVox[-MatFirst,] # get second half voxels
+  sedHalfDat <- droplevels(subset(oneDatSet, Voxel%in%SedHalf$Voxel))
+  sedHalfDatAvg <- droplevels(ddply(sedHalfDat, .(FitVM2, FitVM), summarise,
+                                    meanAvgVal = mean(avgValue)))
+  #sedHalfDatAvg_wide <- reshape(sedHalfDatAvg, idvar = "FitVM", timevar='FitVM2', direction='wide')
+  #sedHalfDatAvg_wide$FitVM <- NULL
+
+  colnames(firstHalfDatAvg)[3] <- 'First_meanAvgVal'
+  colnames(sedHalfDatAvg)[3] <- 'Sed_meanAvgVal'  
+  megHalf <- merge(firstHalfDatAvg, sedHalfDatAvg, by=c('FitVM2','FitVM'))
+  pairCor_WO <- ddply(megHalf, .(FitVM2), summarise,
+                      X3 = cor(First_meanAvgVal,Sed_meanAvgVal))
+  pairBind_WO <- pairCor_WO
+  pairBind_WO$X1 <- seq(1:nrow(pairBind_WO))
+  pairBind_WO$X2 <- seq(1:nrow(pairBind_WO))
+  pairBind_WO$FitVM2 <- NULL
+
+  
+#   pairCor_WO <- data.frame(mapply(cor, firstHalfDatAvg_wide, sedHalfDatAvg_wide))
+#   pairBind_WO <- data.frame(cbind(seq(1:(nrow(pairCor_WO)-1)), seq(1:(nrow(pairCor_WO)-1)), pairCor_WO[2:nrow(pairCor_WO),]))
+  #pairCorRes_WO <- rbind.fill(pairCorRes_WO, pairBind_WO)
+  pairCorRes <- rbind.fill(pairCorRes, pairBind_BO, pairBind_WO)
+  return(pairCorRes)
+  
+}
+
+
+# remove sum of Voxel of preferOrientation = 1
+vonStp2Dat_SubSelPeakIndx_subset <- droplevels(subset(vonStp2Dat_SubSelPeakIndx, sumVox!=1)) 
+
+# run analysis for each observer
+Corr_prefOrientList <- replicate(1000, ddply(vonStp2Dat_SubSelPeakIndx_subset, .(SubjNew), .fun=function(datToCorr) CorrProc2Data(datToCorr)), simplify = FALSE)
+
+
+#Corr_prefOrientList_pos <- Corr_prefOrientList
+#Corr_prefOrientList_avg <- Corr_prefOrientList
+Corr_prefOrientData <- data.frame(Corr_prefOrientList)
+Corr_prefOrientData2 <- Corr_prefOrientData[, grep("^apply|X3",colnames(Corr_prefOrientData))] # select corr columnes
+Corr_prefOrientAvg <- data.frame(rowMeans(Corr_prefOrientData2, na.rm=TRUE)) # get average of each pair
+Corr_prefOrientste <- data.frame((apply(Corr_prefOrientData2,1,sd, na.rm=TRUE))/sqrt(100))
+
+SubjName <- data.frame(Corr_prefOrientList[[1]][[1]])
+CombSer1 <- data.frame(Corr_prefOrientList[[1]][[2]])
+CombSer2 <- data.frame(Corr_prefOrientList[[1]][[3]])
+Corr_prefOrientAvgDat <- data.frame(SubjName,CombSer1,CombSer2,Corr_prefOrientAvg,Corr_prefOrientste)
+colnames(Corr_prefOrientAvgDat) <- c('SubjNew', 'PrefPair1', 'PrefPair2','Corr', 'ste')
+
+## check??
+Corr_prefOrientAvgDat <- droplevels(subset(Corr_prefOrientAvgDat, PrefPair1!=6 & PrefPair2!=6))
+
+# write.csv(Corr_prefOrientAvgDat, file='/Users/tancy/Dropbox/fmridata_r/FFTdata/CSRHSR/CorrBPWP_HSR_AllPeaks.csv', row.names = FALSE)
+
+
+# avg all observers 
+Corr_prefOrientAvgDat2_crossSubj <- droplevels(ddply(Corr_prefOrientAvgDat, .(PrefPair1, PrefPair2), summarise,
+                                                      nSubj = length(unique(SubjNew)),
+                                                      AvgCorr = mean(Corr),
+                                                      steCorr = std(Corr)/sqrt(nSubj)))
+
+
+# ### single subj ###
+# # plot heat map
+# dev.new()
+# ggplot(subset(Corr_prefOrientAvgDat, SubjNew=='S01'), aes(x=factor(PrefPair2), y=factor(PrefPair1))) +
+#   theme_few() +
+#   geom_tile(aes(fill=(Corr))) + 
+#   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+#    midpoint = 0, limit = c(-1,1), space = "Lab") +
+#     labs(title = "Subj02",
+#        x = "Preferred orientation",
+#        y = "Preferred orientation") 
+# 
+# # plot bar
+# dev.new()
+# ggplot(subset(Corr_prefOrientAvgDat, SubjNew=='S01'), aes(x=factor(PrefPair2), y=Corr)) +
+#   theme_few() +
+#   theme(panel.margin = unit(2, "lines")) +
+#   facet_grid(PrefPair1 ~., scales='free', labeller = label_both) + 
+#   ylim(-1,1) +
+#   geom_bar(stat="identity", fill="lightblue", colour="black") +
+#   labs(title = "Subj**",
+#        x = "Preferred orientation",
+#        y = "Correlation coefficient") +
+#   theme(panel.border = element_blank(), axis.line = element_line(colour="black", size=0.5, lineend="square"))
+
+
+
+
+### avg Subj ### 
+dev.new()
+ggplot(Corr_prefOrientAvgDat2_crossSubj, aes(x=factor(PrefPair2), y=AvgCorr)) +
+  theme_few() +
+  theme(panel.margin = unit(2, "lines")) +
+  facet_grid(PrefPair1 ~., scales='free', labeller = label_both) + 
+  ylim(-1,1) +
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  #geom_errorbar(aes(ymax=AvgCorr + steCorr, ymin=AvgCorr -steCorr),position=position_dodge(0.5),width=0.05) +
+  geom_hline(aes(yintercept = 0)) + 
+  scale_x_discrete(labels=c(expression("L90-15"),expression("L45"%+-%"15"),expression("0"%+-%"15"),
+                            expression("R45"%+-%"15"),expression("R90-15"))) +
+  #scale_y_continuous(break=seq(-1,1,1)) + 
+  labs(title = "Across_Subj",
+       x = "Preferred orientation",
+       y = "Correlation coefficient") +
+  theme(panel.border = element_blank(), axis.line = element_line(colour="black", size=0.5, lineend="square"))
+
+```
+
+**** test symmetric orientation within a voxel ****
+```{r SymmetryOrient}
+#a <- subset(PrefOrient_perSubj, SubjNew=='S01' & Voxel%in%c(3,11,13))
+# remove unique voxel, keep voxels contain multiple orientations
+multOrient_Dat <- ddply(PrefOrient_perSubj, .(SubjNew,Voxel), function(x) x[length(x$Voxel)>1,])
+
+# remove voxels contains frontal view
+multOrient_Dat2 <- ddply(multOrient_Dat, .(SubjNew,Voxel), function(x) x[x$FitVM2!=7,])
+
+
+# if symmetry in a voxel (FitVM2=1+13 | FitVM2=4+10), then sumFitVM2==14
+multOrient_Dat2 <- ddply(multOrient_Dat2, .(SubjNew, Voxel), transform,
+                        sumFitVM2 = sum(as.numeric(as.character(FitVM2))))
+
+sym_Dat <- ddply(multOrient_Dat2, .(SubjNew, Voxel,sumFitVM2), summarise,
+                  sym = ifelse(sumFitVM2==14, 1, 0))
+
+prop_sym <- ddply(sym_Dat, .(SubjNew), summarise,
+                  propSym = sum(sym)/2/length(unique(Voxel)))
+
+                 
+#a <- subset(PrefOrient_perSubj, SubjNew=='S01' & Voxel%in%c(3,11))
+
+```
+
+
+**** merge raw data with preferOrient****
+purpose: compared amp between prefer orients and other orients
+```{r AmpComparison}
+library(dplyr)
+rawAmp <- Dat_SubSel_Md1 
+PrefSel <- droplevels(subset(PrefOrient_perSubj, select=c(SubjNew, Voxel, FitVM, FitVM2)))
+
+otherOrient <- anti_join(rawAmp, PrefSel, c("SubjNew", "Voxel", "FitVM", "FitVM2")) # remove preferOrient
+otherOrient2 <- otherOrient[duplicated(otherOrient),] # remove duplicate
+
+PrefOrientAmp <- ddply(PrefOrient_perSubj, .(SubjNew, FitVM2), summarise,
+                       nlength = length(unique(Voxel)),
+                       Amp = mean(avgValue),
+                       ste = sd(avgValue)/sqrt(nlength))
+
+otherOrientAmp <-  ddply(otherOrient2, .(SubjNew, FitVM2), summarise,
+                       nlength = length(unique(Voxel)),
+                       Amp = mean(avgValue),
+                       ste = sd(avgValue)/sqrt(nlength))
+
+otherOrientAmp <- arrange(otherOrientAmp, SubjNew, FitVM2) 
+
+PrefOrientAmp$Cate <- 'pref'
+otherOrientAmp$Cate <- 'others'
+
+OrientAmp <- rbind(PrefOrientAmp,otherOrientAmp)
+
+#write.csv(OrientAmp, file = '/Users/tancy/Dropbox/fmridata_r/FFTdata/CSRHSR/OrientAmp_HSR.csv')
+
+# get avgAmp of pref and other orients of each subj
+AvgPrefOtherAmp_perSubj <- ddply(OrientAmp, .(SubjNew, Cate), summarise,
+                                 nLen = length(unique(FitVM2)),
+                                 avgAmp = mean(Amp),
+                                 steAmp = sd(Amp)/sqrt(nLen))
+
+AvgPrefAmp_perSubj <- droplevels(subset(AvgPrefOtherAmp_perSubj, Cate=='pref'))
+AvgOthAmp_perSubj <- droplevels(subset(AvgPrefOtherAmp_perSubj, Cate=='others'))
+
+t.test(AvgPrefAmp_perSubj$avgAmp,AvgOthAmp_perSubj$avgAmp, paired = TRUE)
+
+# plot avg Amp of prefer orientations
+
+AvgPrefOtherAmp <- ddply(AvgPrefOtherAmp_perSubj, .(Cate), summarise,
+                         nSubj= length(SubjNew),
+                         meanAmp = mean(avgAmp),
+                         ste = sd(avgAmp)/sqrt(nSubj))
+
+
+dev.new()
+ggplot(AvgPrefOtherAmp, aes(x = Cate, y = meanAmp)) +
+  theme_few() +
+  geom_bar(stat="identity", colour='gray') +
+  ylim(-0.2,0.4)+
+  geom_errorbar(aes(ymin=meanAmp-ste,ymax=meanAmp+ste),
+                position=position_dodge(0.5),width=0.05) +
+  scale_x_discrete(limits=c("pref","others")) +
+  labs(title = "HSR",
+       x = "preferred vs. nonpreferred orientations",
+       y = "Normalized BOLD responses (z-score)")
+
+ggsave(file='SuppFig9B_prefotherAmp.pdf', width=7, height=7)
+
+## do rank
+AvgOrientAmp <- ddply(OrientAmp, .(FitVM2, Cate), summarise,
+                      nSubj = length(unique(SubjNew)),
+                      avgAmp = mean(Amp),
+                      steAmp = sd(Amp)/sqrt(nSubj))
+
+
+
+
+# normalize values between 1 and 0
+OrientAmpNorm <- ddply(OrientAmp, .(SubjNew), summarise,
+                       Cate = Cate,
+                       normAmp = (Amp-min(Amp))/(max(Amp)-min(Amp)))
+
+OrientAmpNorm <- ddply(OrientAmpNorm, .(SubjNew, Cate), transform,
+                       sortAmp = sort(normAmp, decreasing = TRUE),
+                       CateIndx = seq(1:length(Cate)))
+
+AvgOrientAmpNorm <- ddply(OrientAmpNorm, .(CateIndx, Cate), summarise,
+                          nSubj = length(unique(SubjNew)),
+                          avgAmp = mean(sortAmp),
+                          steAmp = sd(sortAmp)/sqrt(nSubj))
+
+
+# plot avg Amp of prefer orientations
+dev.new()
+ggplot(subset(AvgOrientAmp, Cate=='pref'), aes(x = FitVM2, y = avgAmp)) +
+  theme_few() +
+  geom_bar(stat="identity", colour='gray') +
+  #ylim(0,0.4)+
+  geom_errorbar(aes(ymin=avgAmp-steAmp,ymax=avgAmp+steAmp),
+                position=position_dodge(0.5),width=0.05) +
+  scale_x_discrete(labels=c(expression("L90-15"),expression("L45"%+-%"15"),
+                            expression("0"%+-%"15"),
+                            expression("R45"%+-%"15"),expression("R90-15"))) +
+  labs(title = "HSR",
+       x = "Orientations",
+       y = "Normalized BOLD responses (z-score)")
+
+
+
+# plot normalize between prefer and other orientations for individuals
+dev.new()
+ggplot(OrientAmpNorm, aes(x = CateIndx, y = sortAmp, colour=Cate)) +
+  theme_few() +
+  facet_wrap(~SubjNew) +
+  geom_line() +
+  labs(title = "HSR",
+       x = "Orientation Rank",
+       y = "Normalized Amplitude")
+
+
+# plot avg normalize between prefer and other orientations
+
+dev.new()
+ggplot(AvgOrientAmpNorm, aes(x = CateIndx, y = avgAmp, colour=Cate)) +
+  theme_few() +
+  geom_line() +
+  labs(title = "HSR",
+       x = "Orientation Rank",
+       y = "Normalized Amplitude")
+
+
+```
+
+
+
+
+```{r PrefOrient_ANOVA}
+# library(nlme)
+# 
+# # one-way within subject anova
+# 
+# PrefOrient_5orient
+# 
+# Orient.mod1 <- aov(prefOrient ~ FitVM2 + Error(SubjNew/FitVM2), data=PrefOrient_5orient)
+# summary(Orient.mod1)
+```
+
+
+
+```{r exportMaxPeak}
+
+Coord_vox <- ddply(vonStp2Dat_Sel, .(SubjNew, Voxel), summarise,
+                   r2 = mean(r2),
+                   x=mean(x),
+                   y=mean(y),
+                   z=mean(z))
+
+maxPeak_VoxCoord <- merge(maxPeak_Vox, Coord_vox, all = FALSE) # intersect
+
+
+# export prefer orientation of each voxel
+#write.csv(maxPeak_VoxCoord, file ='/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2Dat2FlatMap/prefOrientVox_r001.csv', row.names = FALSE)
+
+```
+
+
+
+
+
+```{r plot3DScatter}
+#MIcolvar  <-  color.scale(MI_table$MIvalue,c(0,1,1),c(1,1,0),c(0,1,0))
+library(plot3D)
+library(rgl)
+keepCol <- c("SubjNew","Voxel","x","y","z")
+VoxCoord <- vonStp2Dat_Sel[keepCol]
+maxPeak_Coord <- merge(maxPeak_Vox,VoxCoord, by=c("SubjNew", "Voxel"))
+maxPeak_Coord$maxPeak5Indx <- as.numeric(maxPeak_Coord$maxPeak5Indx)
+OneSubjDat <- droplevels(subset(maxPeak_Coord, SubjNew=="S01"))
+
+SelVox3D <- ddply(OneSubjDat, .(Voxel), summarise,
+                        prefOr = mean(maxPeak5Indx),
+                        #width = mean(widthDeg),
+                        x = mean(x),
+                        y = mean(y),
+                        z = mean(z)
+                        )
+
+c=cut(OneSubjDat$maxPeak5Indx, breaks=128)
+MIcolvar  <-  heat.colors(60)#[as.numeric(c)]
+open3d()
+clear3d("all")
+bg3d(color="#887777")
+light3d()
+plot3d(OneSubjDat$x,OneSubjDat$y, OneSubjDat$z, type='s',col=MIcolvar, size=1, lit=FALSE)
+
+# Fit a plane to the data
+fit <- lm( OneSubjDat$z~OneSubjDat$x + OneSubjDat$y)
+coefs <- coef(fit)
+a <- coefs['OneSubjDat$x']
+b <- coefs['OneSubjDat$y']
+c <- -1
+d <- coefs['(Intercept)']
+planes3d(a, b, c, d, alpha=0.2)
+
+
+#scatter3D(SelVox3D$x,SelVox3D$y, SelVox3D$z, colvar=SelVox3D$prefOr, theta =15, phi =0 )
+
+
+```
+
+
+
+
+## make a matrix to see the how neighbor voxel's orient close to each other
+## ideally, consider closest 26 neighbors
+## if a voxel contains multiple orientations, we treat each orientation as single unit, ignore whether they are in the same voxel
+=======================
+      90  45 0 -45 -90
+| 90 | 0  1  2  3   4
+| 45 | 1  0  1  2   3
+|  0 | 2  1  0  1   2
+|-45 | 3  2  1  0   1
+|-90 | 4  3  2  1   0   
+=========================
+```{r interVox}
+#
+# IMPORT PrefOrient_perSubj FROM "allPeakPlot" chunk
+
+keepCol <- c("SubjNew","Voxel","x","y","z")
+VoxCoord <- vonStp2Dat_Sel[keepCol]
+AllPeak_Coord <- merge(PrefOrient_perSubj,VoxCoord, by=c("SubjNew", "Voxel"))
+AllPeak_Coord <- AllPeak_Coord[!duplicated(AllPeak_Coord),]
+AllPeak_Coord <- AllPeak_Coord[,c('SubjNew','Voxel','FitVM2','x','y','z')]
+AllPeak_Coord$FitVM2 <- as.numeric(AllPeak_Coord$FitVM2)
+colnames(AllPeak_Coord)[3] <- 'prefOr'
+OneSubjDat <- droplevels(subset(AllPeak_Coord, SubjNew=="S07"))
+
+
+# Summary of prefer orient in OneSubjDat
+SumPref <- ddply(OneSubjDat, .(prefOr), summarise,
+                 sumPref = sum(prefOr))
+
+# fitVMsel <- ddply(OneSubjDat, .(Voxel), summarise,
+#                         prefOr = mean(FitVM2),
+#                         #width = mean(widthDeg),
+#                         x = mean(x),
+#                         y = mean(y),
+#                         z = mean(z)
+#                         )
+
+
+
+fitVMsel <- OneSubjDat
+# create a dataframe in which each voxel is corresponding to their neighbors 
+# including voxelself
+
+InterDat <- data.frame()
+for (ixRow in 1:nrow(fitVMsel)) {
+  #browser()
+  oneDat <- fitVMsel[ixRow, ] # subset single row
+  datX = oneDat$x
+  datY = oneDat$y
+  datZ = oneDat$z
+  neighSelX <- subset(fitVMsel, fitVMsel$x==datX & fitVMsel$y>=datY-3 &  fitVMsel$y<=datY+3 & fitVMsel$z>=datZ-3 & fitVMsel$z<=datZ+3)
+  neighSelY <- subset(fitVMsel, fitVMsel$y==datY & fitVMsel$x>=datX-3 &  fitVMsel$x<=datX+3 & fitVMsel$z>=datZ-3 & fitVMsel$z<=datZ+3)
+  neighSelZ <- subset(fitVMsel, fitVMsel$z==datZ & fitVMsel$y>=datY-3 &  fitVMsel$y<=datY+3 & fitVMsel$x>=datX-3 & fitVMsel$x<=datX+3)
+  neighSel <- rbind(neighSelX, neighSelY, neighSelZ)
+  neighSel <- subset(neighSel, select=c("Voxel", "prefOr"))
+  colnames(neighSel) <- c("neighVoxel", "neighPrefOr")
+  selfPrefOr <- oneDat$prefOr
+  Voxel <- oneDat$Voxel
+  #md <- oneDat$md
+  #ParSeq <- oneDat$ParSeq
+  meg <- cbind(Voxel, selfPrefOr, neighSel)
+  InterDat  <-rbind.fill(InterDat, meg)
+  
+  }
+
+# remove neighVoxel is selfVoxel
+dropDatIndx <- which(InterDat$Voxel==InterDat$neighVoxel & InterDat$selfPrefOr==InterDat$neighPrefOr) # find same voxel & neighPrefOr
+InterDatSel <- InterDat[-c(dropDatIndx), ]
+#head(InterDatSel)
+
+RelatedVox <- InterDatSel[!duplicated(InterDatSel),]
+
+# change number label to orientation
+library(car)
+RelatedVox$selfPrefOr <- recode(RelatedVox$selfPrefOr, "'1'='-90';'2'='-45';'3'='0';'4'='45';'5'='90'")
+RelatedVox$neighPrefOr <- recode(RelatedVox$neighPrefOr, "'1'='-90';'2'='-45';'3'='0';'4'='45';'5'='90'")
+
+# categorize self and neighbor orientations
+splitRange <- seq(-91, 91, length.out=6) # 90 45 0 -45 -90
+Cutlabels <- c("-90", "-45", "0", "45", "90")
+RelatedVox$centralPref <- cut(RelatedVox$selfPrefOr, breaks =splitRange, label=Cutlabels)
+RelatedVox$neighPref <- cut(RelatedVox$neighPrefOr, breaks =splitRange, label=Cutlabels)
+
+
+# calculate the frequency of orientation of neighbors of each orientations
+selfNeighTable <- count(RelatedVox, c("centralPref", "neighPref"))
+selfNeighTable <- ddply(selfNeighTable, .(centralPref), transform,
+                  sum = sum(freq))
+selfNeighTable$prop <- round(selfNeighTable$freq/selfNeighTable$sum, digit=4)
+
+
+# tranform to matrix
+selfNeighColumn <- selfNeighTable[ , !(colnames(selfNeighTable) %in% c("freq", "sum"))] # drop non used columns
+selfNeighTable2 <- reshape(selfNeighColumn, timevar = "neighPref", direction = "wide", v.names = "prop", idvar = "centralPref")
+
+
+selfNeighProp <- selfNeighColumn
+SumPref$prefOr <-NULL
+
+centralSumPref <- SumPref
+centralSumPref$centralPref <-  c('-90','-45','0','45','90')
+colnames(centralSumPref)[1] <- 'centralSum'
+
+neighPrefSumPref <- SumPref
+neighPrefSumPref$neighPref <-  c('-90','-45','0','45','90')
+colnames(neighPrefSumPref)[1] <- 'neighSum'
+
+NeighPropC <- merge(selfNeighProp,centralSumPref)
+NeighPropCN <- merge(NeighPropC,neighPrefSumPref)
+NeighPropCN$centralSum[NeighPropCN$neighPref==NeighPropCN$centralPref] <- 0
+
+# divide each proportion distribution by overall proportion
+# i.e. (the prop of -90 and -45)/
+corNeighPropCN <- ddply(NeighPropCN, .(neighPref, centralPref), summarise,
+                        corProp = prop/((centralSum+neighSum)/sum(SumPref)))
+
+# normalize the arbitray unit for each preferred orienation
+Norm_corNeighPropCN <- ddply(corNeighPropCN, .(centralPref), transform,
+                             distPref = abs(as.numeric(centralPref)-as.numeric(neighPref)), # find dist
+                             norm_corProp = (corProp-min(corProp))/(max(corProp)-min(corProp)))
+
+
+
+
+# 
+# Norm_corNeighPropCN$SubjNew <- "S02"
+# 
+# Norm_corNeighPropCN_S02 <- Norm_corNeighPropCN
+# 
+# Norm_corNeighPropCN_All <- rbind(Norm_corNeighPropCN_S01,Norm_corNeighPropCN_S02,Norm_corNeighPropCN_S03,
+#       Norm_corNeighPropCN_S04,Norm_corNeighPropCN_S05,Norm_corNeighPropCN_S06,
+#       Norm_corNeighPropCN_S07)
+# 
+# write.csv(Norm_corNeighPropCN_All, file='/Users/tancy/Dropbox/fmridata_r/FFTdata/CSRHSR/Norm_corNeighProp_HSR.csv', row.names = FALSE)
+
+
+# get the distance between prefer orient and neighbor orient
+Norm_corNeighPropCN_Dist <- ddply(Norm_corNeighPropCN, .(distPref), summarise,
+                                  avg_normCorP = mean(norm_corProp),
+                                  ste_normCorP = std(norm_corProp)/sqrt(length(distPref)))
+
+# show each preferred orient
+dev.new()
+ggplot(Norm_corNeighPropCN ,aes(x=neighPref, y=norm_corProp, group=1)) +
+  theme_few() +
+  facet_wrap(~centralPref) +
+  #ylim(0,1) +
+  geom_line() +
+  geom_point() +
+  labs(title = "percentage of neighbor orientations (Subj **)",
+       x = "preferred orientations",
+       y = "normalized probability")
+
+# show orient dist from pref orient
+dev.new()
+ggplot(Norm_corNeighPropCN_Dist ,aes(x=distPref, y=avg_normCorP)) +
+  theme_few() +
+  ylim(0,1) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(ymin=avg_normCorP-ste_normCorP,ymax=avg_normCorP+ste_normCorP),
+                width=0.05) +
+  scale_x_continuous(labels=c("0"="0","1"="45","2"="90","3"="135","4"="180")) +
+  labs(title = "percentage of neighbor orientations (Subj 07)",
+       x = "difference from preferred orientation (degree)",
+       y = "normalized probability")
+
+ggsave(file='Fig9_NearbyProp_Subj07.pdf', width = 8, height = 7)
+
+selfNeighTable2
+
+# dev.new() 
+# ggplot(corNeighPropCN, aes(neighPref, centralPref, fill = corProp)) +
+#   geom_tile() + 
+#   scale_fill_gradient(low = "blue", high = "yellow") +
+#   labs(title = "percentage of neighbor orientations")
+  
+
+
+## test another ways
+# # sum of neighbor orientation of each voxel
+# NeighPrefRelatedVox <- ddply(RelatedVox, .(Voxel, centralPref), summarise,
+#                              Pref_L90 = sum(neighPref=='-90')/length(neighVoxel),
+#                              Pref_L45 = sum(neighPref=='-45')/length(neighVoxel),
+#                              Pref_0 = sum(neighPref=='0')/length(neighVoxel),
+#                              Pref_R45 = sum(neighPref=='45')/length(neighVoxel),
+#                              Pref_R90 = sum(neighPref=='90')/length(neighVoxel))
+# 
+# NeighPrefRelatedVox_long <- reshape(NeighPrefRelatedVox, direction = 'long', 
+#                                     idvar='Voxel', varying=c('Pref_L90','Pref_L45', 'Pref_0','Pref_R45','Pref_R90'), sep='_')
+# 
+# ddply(NeighPrefRelatedVox_long, .(centralPref, time), summarise,
+#       avgPref = mean(Pref))
+
+```
+
+**** find central voxel of each prefer orientation ****
+** using euclidean distance and find the min dist of voxel **
+```{r findCenterVoxel}
+
+#detach("package:dplyr", unload=TRUE)
+
+# IMPORT PrefOrient_perSubj FROM "allPeakPlot" chunk
+
+keepCol <- c("SubjNew","Voxel","x","y","z")
+VoxCoord <- vonStp2Dat_Sel[keepCol]
+AllPeak_Coord <- merge(PrefOrient_perSubj,VoxCoord, by=c("SubjNew", "Voxel"))
+AllPeak_Coord <- AllPeak_Coord[!duplicated(AllPeak_Coord),]
+AllPeak_Coord <- AllPeak_Coord[,c('SubjNew','Voxel','FitVM2','x','y','z')]
+AllPeak_Coord$FitVM2 <- as.numeric(AllPeak_Coord$FitVM2)
+colnames(AllPeak_Coord)[3] <- 'prefOr'
+prefDat <- droplevels(subset(AllPeak_Coord, SubjNew=="S06"))
+
+
+PrefDistRes <- data.frame()
+for (ixOr in 1:length(unique(prefDat$prefOr))) {
+  OnePref <- droplevels(subset(prefDat, prefOr==ixOr))
+  #row.names(OnePref) <- OnePref$Voxel # give voxel as label
+  OnePrefDist <- colSums(as.matrix(dist(OnePref[c('x','y','z')], method ="euclidean")))
+  OnePrefDistDat <- cbind(OnePref$Voxel, ixOr, data.frame(OnePrefDist))
+  PrefDistRes <- rbind(PrefDistRes,OnePrefDistDat)
+}
+
+colnames(PrefDistRes) <- c('Voxel','prefOr', 'Eudist')
+prefDatDist <- merge(prefDat, PrefDistRes, by=c('Voxel','prefOr'))
+
+
+# identify central voxel of each pref orientation
+prefDatCent <- ddply(prefDatDist, .(prefOr), summarise,
+                     minDist = min(Eudist),
+                     x = x[Eudist==minDist][1],
+                     y = y[Eudist==minDist][1],
+                     z = z[Eudist==minDist][1])
+
+
+
+centDist <- dist(prefDatCent[,3:5], method ="euclidean")
+centDist <- data.frame(as.matrix(centDist))
+#colnames(centDist) <- c('-90','-45','0','45','90')
+#centDist$Pref <- c('-90','-45','0','45','90')
+centDistLong <- reshape(centDist, direction = "long",  
+                        varying = c('X1','X2','X3','X4','X5'), timevar = "orient", 
+                        v.names = "dist",
+                        times = c('-90','-45','0','45','90'))
+
+# change number label to orientation
+#library(car)
+centDistLong$Pref <- recode(centDistLong$id, "'1'='-90';'2'='-45';'3'='0';'4'='45';'5'='90'")
+
+# normalize the arbitray unit for each preferred orienation
+centDistLongDist <- ddply(centDistLong, .(id), transform,
+                             distPref = abs(as.numeric(orient)-as.numeric(Pref)))
+
+centDistLongDist <- centDistLongDist[!centDistLongDist$distPref==0,]
+
+centDistLongDist <- ddply(centDistLongDist, .(id), transform,
+                          normDist = (dist-min(dist))/(max(dist)-min(dist)))
+
+
+centDistLongDist_S06 <- centDistLongDist
+# get the distance between prefer orient and neighbor orient
+# centDistLongDist_S01$SubjNew <- 'S01'
+# centDistLongDist_S02$SubjNew <- 'S02'
+# centDistLongDist_S03$SubjNew <- 'S03'
+# centDistLongDist_S04$SubjNew <- 'S04'
+# centDistLongDist_S05$SubjNew <- 'S05'
+# centDistLongDist_S06$SubjNew <- 'S06'
+# centDistLongDist_S07$SubjNew <- 'S07'
+# 
+# centDistLongDist_All <- rbind(centDistLongDist_S01,centDistLongDist_S02,centDistLongDist_S03,
+#                               centDistLongDist_S04,centDistLongDist_S05,centDistLongDist_S06,
+#                               centDistLongDist_S07)
+
+centDistLongDistSubjAvg <- ddply(centDistLongDist_All, .(SubjNew,distPref), summarise,
+                                  avg_dist = mean(normDist),
+                                  ste = sd(normDist)/sqrt(4))
+ 
+centDistLongDistAvg <- ddply(centDistLongDistSubjAvg, .(distPref), summarise,
+                             nSubj = length(unique(SubjNew)),
+                             avg = mean(avg_dist),
+                             ste = sd(avg_dist)/sqrt(nSubj))
+
+# show each preferred orient
+dev.new()
+ggplot(subset(centDistLongDistSubjAvg, SubjNew=='S07') ,aes(x=as.factor(distPref), y=avg_dist, group=1)) +
+  theme_few() +
+  #facet_wrap(~SubjNew) +
+  geom_line() +
+  geom_point() +
+  ylim(0,1) +
+   geom_errorbar(aes(ymin=avg_dist-ste,ymax=avg_dist+ste),
+                width=0.05) +
+    labs(title = "distance between central points of the prefer orientation cluster Subj07",
+       x = "difference from preferred orientation (degree)",
+       y = "spatial distance (normalized)")
+
+ggsave(file='Fig10_distPrefOrient_S07.pdf', width = 8, height = 7)
+
+# 
+# 
+# # show orient dist from pref orient
+dev.new()
+ggplot(centDistLongDistAvg ,aes(x=as.factor(distPref), y=avg, group=1)) +
+  theme_few() +
+  geom_line() +
+  geom_point() +
+  ylim(0,1) +
+  geom_errorbar(aes(ymin=avg-ste,ymax=avg+ste),
+                width=0.05) +
+  labs(title = "distance between medial points of the prefer orientations (N=7)",
+       x = "difference from preferred orientation (degree)",
+       y = "spatial distance (normalized)")
+  
+ggsave(file='Fig10_distPrefOrient_Avg.pdf', width = 8, height = 7)
+
+# # Fit a plane to the data
+library(scatterplot3d)
+library(plot3D)
+library(rgl)
+
+
+c=cut(prefDatCent$prefOr, breaks=5)
+cbbPalette <- c("black", "red", "blue", "green", "white") # -90, -45, 0, 45, 90
+open3d()
+clear3d("all")
+bg3d(color="#887777")
+light3d()
+plot3d(prefDatCent$x,prefDatCent$y, prefDatCent$z, type='s',col=cbbPalette, size=1, lit=FALSE)
+
+fit <- lm(prefDatCent$z ~ prefDatCent$x + prefDatCent$y)
+coefs <- coef(fit)
+a <- coefs["x"]
+b <- coefs["y"]
+c <- -1
+d <- coefs["(Intercept)"]
+planes3d(a, b, c, d, alpha = 0.5)
+
+ids <- plot3d(prefDatCent$x,prefDatCent$y, prefDatCent$z, type = "s", col=cbbPalette, size = 1, forceClipregion = TRUE) 
+useSubscene3d(ids["clipregion"])
+clipplanes3d(a, b, c, d)
+
+
+
+
+
+s3d <-scatterplot3d(prefDatCent$x,prefDatCent$y, prefDatCent$z, pch=16, color=prefDatCent$prefOr,
+   main="3D Scatterplot")
+fit <- lm( prefDatCent$x~prefDatCent$y + prefDatCent$z)
+s3d$plane3d(fit)
+
+
+scatter3D(prefDatCent$x,prefDatCent$y, prefDatCent$z, colvar=prefDatCent$prefOr, theta =15, phi =0 )
+# 
+ 
+# ########################
+# ## test cluster
+# a <- droplevels(subset(prefDat, select =c('x','y','z')))
+# aa <- dist(a, method ="euclidean")
+# fit <- hclust(aa, method="ward.D") 
+# 
+# dev.new()
+# plot(fit) # display dendogram
+# groups <- cutree(fit, k=5) # cut tree into 5 clusters
+# # draw dendogram with re borders around the 5 clusters 
+# rect.hclust(fit, k=5, border="red")
+# 
+# dev.new()
+# a_kmean <- kmeans(a,5)
+# plot(a, col = a_kmean$cluster)
+# points(a_kmean$centers, col = 1:5, pch = 8, cex =2)
+# 
+# a$cluster <- as.factor(a_kmean$cluster)
+# plot3d(a$x,a$y, a$z, col=a$cluster) 
+
+#########################
+
+ centDistLongDistAvg
+```
+
+
+
+**** show plots of each fitting of a voxel and statistic results ****
+```{r randVoxPlot_withAnaly}
+## plot individual fitting
+vonStp2Dat_Sel$Voxel <- as.factor(vonStp2Dat_Sel$Voxel)
+
+plotRandVox <- droplevels(subset(vonStp2Dat_Sel, SubjNew=='S01' & Voxel%in%c(1:50)))#%in%sample(levels(Voxel),1)))
+
+StatTable <- ddply(plotRandVox, .(Voxel, md), summarise, 
+                   F_pval = round(mean(Pr..F.),3),
+                   loglik = round(mean(chiP),3),
+                   AICc = round(mean(AICc),3))
+
+ggplot(data=plotRandVox, aes(x=Orient, y=as.numeric(fitValue))) +
+  theme_few() + 
+  facet_wrap(Voxel~md, scale='free') + 
+  geom_line(color='red', size=1) +
+  geom_point(aes(y=posValue), size=1.5) +
+  #geom_line(aes(y=posValue), colour='grey90', size=0.5) +
+  ylab("signal change % (normalized)") +
+  #geom_vline(data=vonFitPars_2rdDatPrefOr, aes(xintercept = as.numeric(value)), colour="grey70", linetype = "longdash") +
+  #geom_hline(data=vonFitPars_2rdDatAmp, aes(yintercept = as.numeric(value)), colour="grey30", linetype = "longdash") +
+  ylim(-0.5,1) +
+  geom_errorbar(aes(ymin=posValue-stePeak, ymax=posValue+stePeak), width=0.05) +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) 
+StatTable
+
+```
+
+
+# compare low res and high res
+```{r chi_test}
+# BestMd freq in low res of all subj
+BesMd_LR <- c("1" = 422, "2" = 338, "3" = 43)
+
+# BestMd freq in high res of all subj
+BesMd_HR <- colSums(FreqAIC_Table)
+
+# merge low and high freq
+BestMd_LHR <- rbind(BesMd_LR,BesMd_HR)
+BestMd_LHR2 <- cbind(BestMd_LHR[,"1"], BestMd_LHR[,"2"] +BestMd_LHR[,"3"]) # combine freq of 2 & 3 peaks
+
+# do chi-test
+chisq.test(BestMd_LHR2) 
+
+
+```
+
+
+*** find peaks of a vector***
+### consider duplicated points at maxima
+### consider duplicated points at start
+### consider start is maxima
+### however it can not treat start as max, if duplicated points at start
+```{r localMax}
+localMaxima <- function(x) {
+  # Use -Inf instead if x is numeric (non-integer)
+  y <- diff(c(-.Machine$integer.max, x)) > 0L
+  rle(y)$lengths
+  y <- cumsum(rle(y)$lengths)
+  y <- y[seq.int(1L, length(y), 2L)]
+   if (x[[1]] == x[[2]]) {
+    y <- y[-1]
+  }
+  y
+}
+
+```

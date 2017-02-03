@@ -1,0 +1,101 @@
+---
+title: "OrientPreferAnovaTest"
+##using after "OddEvenBlockCorr.Rmd" ##
+##get anova to see whether orientation selectivity of each voxel##
+
+---
+
+### purpose: whether face areas has orientation preferences
+### hope we can distinguish rOFA is sensitive to face orientation but not rFFA
+
+################### repeated ANOVA ######################
+### using one way repeated measurement of anova to test whether significant diff among orient
+#################################################
+
+
+
+```{r loadData}
+rm(list = ls())
+library(pracma)
+library(ggplot2)
+library(ggthemes)
+library(plyr)
+library(reshape2)
+library(proto)
+library(nls2)
+library(scales)
+library(gridExtra)
+#library(sqldf) # 150829 added for colname manipulated
+options(device='quartz') # open new plot window
+setwd("/Volumes/SSD/FFTvoxel") # working directory
+
+FitData <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/HighRes/fitVM_Stp1_S06_8s_sm_HR_kap10pi.csv') # load all data
+vonFitCurve <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/HighRes/fitVM_Stp1_S06_8s_sm_HR_kap10pi_RData.csv') # load all data
+
+saveName <- '/Users/tancy/Dropbox/fmridata_r/FFTdata/repAnova/S06_HR_repAov_8s_sm_kap10pi.csv'
+
+```
+
+**** get maxPeak of each fitVM of each block ****
+```{r MaxBlock}
+# get maxPeak of each fitVM in each block
+maxPeakVM_Block <- ddply(vonFitCurve, .(Voxel, Block, FitVM), summarise, 
+                         maxValue = max(value),
+                         minValue = min(value),
+                         Value = ifelse(abs(maxValue)>abs(minValue), maxValue, minValue))
+
+# # get real signal from average VM across blocks
+# maxPeakVM <- ddply(maxPeakVM_Block, .(Voxel, FitVM), summarise,
+#                    nBlock = length(unique(Block)),
+#                    meanMaxVal = mean(maxValue),
+#                    steMaxVal = std(maxValue)/sqrt(nBlock))
+```
+
+
+****repeated measurement of anova****
+### consider all trials of each voxel ###
+```{r F-test}
+library(nlme)
+
+maxPeakVM_Block$Block <- as.factor(maxPeakVM_Block$Block)
+maxPeakVM_Block$FitVM <- as.factor(maxPeakVM_Block$FitVM)
+  
+aovfun <- function(x){
+  #browser()
+  sumAov <- summary(aov(Value ~ FitVM + Error(Block/FitVM), data=x)) # treat FitVM, Block as factor !!!
+  Pvalue <- sumAov$'Error: Block:FitVM'[[1]]$'Pr(>F)'[1]
+  Fvalue <- sumAov$'Error: Block:FitVM'[[1]]$'F value'[1]
+  FPvalue <- cbind(Fvalue, Pvalue)
+  return(FPvalue)
+}
+
+aovVox <- ddply(maxPeakVM_Block, .(Voxel), aovfun)
+#aovVox$Pvalue <- round(aovVox$Pvalue, digit=4)  
+
+aovVox$Subj <- unique(FitData$Subj)
+aovVox$ROIs <- unique(FitData$ROIs)
+sum(ifelse(aovVox$Pvalue<=0.05,1,0))
+
+# # using nonlinear model 
+# # same result as aov
+# lmefun <- function(x){
+#   #browser()
+#   rmaxValue <- rank(x$maxValue) # do ranking (like Friedman test)
+#   lme.raw <- lme(fixed = maxValue ~ FitVM, random = ~1|Block/FitVM, data=x)
+#   rlme.raw <- lme(fixed = rmaxValue ~ FitVM, random = ~1|Block/FitVM, data=x)
+#   Fvalue <- anova(lme.raw)$'F-value'[2]
+#   Pvalue <- anova(lme.raw)$'p-value'[2]
+#   rFvalue <- anova(rlme.raw)$'F-value'[2]
+#   rPvalue <- anova(rlme.raw)$'p-value'[2]
+#   FPvalue <- cbind(Fvalue, Pvalue, rFvalue, rPvalue)
+#   return(FPvalue)
+# }
+# 
+# lmeVox <- ddply(maxPeakVM_Block, .(Voxel), lmefun)
+
+write.csv(aovVox, file = saveName, row.names= FALSE)
+
+```
+
+
+

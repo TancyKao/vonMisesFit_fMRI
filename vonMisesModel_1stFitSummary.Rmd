@@ -1,0 +1,672 @@
+---
+title: "vonMisesModel_IndAnaly_Stp1_HighRes2"
+## using after "vonMisesModel_megFitAnovaCorrR2.Rmd" ##
+## 
+output: html_document
+---
+
+
+*** consider the performance of stp1 results **** 
+```{r loadData}
+rm(list=ls())
+library(pracma)
+library(ggplot2)
+library(ggthemes)
+library(plyr)
+library(reshape2)
+library(proto)
+library(nls2)
+library(scales)
+library(gridExtra)
+library(RColorBrewer)
+
+#library(sqldf) # 150829 added for colname manipulated
+options(device='quartz') # open new plot window
+setwd("/Users/tancy/Dropbox/fmridata_r") # working directory
+
+vonStp1Dat_S01_rOFA <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S01_HR_sm_kap10pi_meg.csv') 
+vonStp1Dat_S02_rOFA <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S02_HR_8s_sm_kap10pi_meg.csv') 
+vonStp1Dat_S03_rOFA <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S03_HR_8s_sm_kap10pi_meg.csv') 
+vonStp1Dat_S04_rOFA <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S04_HR_sm_kap10pi_meg.csv') 
+vonStp1Dat_S05_rOFA <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S05_HR_sm_kap10pi_meg.csv') 
+vonStp1Dat_S06_rOFA <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S06_HR_8s_sm_kap10pi_meg.csv')
+vonStp1Dat_S07_rOFA <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S07_HR_sm_kap10pi_meg.csv') 
+
+```
+
+
+```{r setR2_AllSubj}
+# set r2
+r2rOFA <- c(0.07, 0.07,0.07,0.07,0.07,0.08, 0.08)
+
+vonStp1Dat_S01_rOFA$r2cut <- r2rOFA[1]
+vonStp1Dat_S02_rOFA$r2cut <- r2rOFA[2]
+vonStp1Dat_S03_rOFA$r2cut <- r2rOFA[3]
+vonStp1Dat_S04_rOFA$r2cut <- r2rOFA[4]
+vonStp1Dat_S05_rOFA$r2cut <- r2rOFA[5]
+vonStp1Dat_S06_rOFA$r2cut <- r2rOFA[6]
+vonStp1Dat_S07_rOFA$r2cut <- r2rOFA[7]
+
+vonStp1Dat_all <- rbind(vonStp1Dat_S01_rOFA,vonStp1Dat_S02_rOFA,vonStp1Dat_S03_rOFA,vonStp1Dat_S04_rOFA,
+                        vonStp1Dat_S05_rOFA,vonStp1Dat_S06_rOFA,vonStp1Dat_S07_rOFA) 
+
+
+## change subject order to fit low res subject order
+vonStp1Dat_all$SubjNew = factor(vonStp1Dat_all$Subj, levels = c("S01", "S02","S03", "S04", "S05", "S06", "S07"))  
+levels(vonStp1Dat_all$SubjNew) <- c("S01", "S02","S03", "S06", "S07","S04","S05") 
+vonStp1Dat_all$SubjNew <- factor(vonStp1Dat_all$SubjNew, levels= c("S01", "S02","S03", "S04", "S05","S06","S07")) # resort order
+
+
+
+## select good voxels
+vonStp1DatSel <- droplevels(subset(vonStp1Dat_all, r2>r2cut))
+vonStp1DatSel_subj <- ddply(vonStp1DatSel, .(SubjNew, Voxel), summarise,
+                            Subj=unique(Subj),
+                            ROIs=ROIs[1],
+                            r2=r2[1],
+                            maxSel=maxSel[1],
+                            Fvalue=Fvalue[1],
+                            Pvalue=Pvalue[1],
+                            CORR = CORR[1],
+                            pval = pval[1],
+                            x = x[1],
+                            y = y[1],
+                            z = z[1],
+                            Sig_05 = Sig_05[1]
+                            )
+
+
+# consider r2 # use raw Subj order, and reorder in Stp2
+vonStp1DatSel_2Stp2 <- subset(vonStp1DatSel_subj, select=c('Subj', 'Voxel', 'ROIs', 'r2', 'Sig_05'))
+
+
+```
+
+
+```{r Table}
+r2quant <- ddply(vonStp1Dat_all, .(SubjNew, ROIs), summarise,
+                 nVox = length(unique(Voxel)),
+                 r2_30th = quantile(r2, .30),
+                 r2_50th = quantile(r2, .50),
+                 r2_70th = quantile(r2, .70))
+
+# to get percentage of max_Sel & F test
+AovTable <- ddply(vonStp1DatSel_subj, .(SubjNew, ROIs), summarise,
+                  nVox_r2sel = length(unique(Voxel)),
+                  dropMax_sum = sum(maxSel),
+                  Aov_SigVox = sum(ifelse(Pvalue<0.05, 1, 0)))
+
+# # to get percentage of F_test & r2
+# r2AovTable <- ddply(vonStp1DatSel_subj, .(SubjNew, ROIs), summarise,
+#                   nVox_sel = length(unique(Voxel)),
+#                   r2Aov_SigVox = sum(ifelse(Pvalue<0.05 & maxSel==1, 1, 0)), # bonf or adj
+#                   r2Aov_percent = r2Aov_SigVox/nVox_sel)
+
+r2Aov_table <- merge(r2quant, AovTable, by=c("SubjNew","ROIs"))
+r2Aov_table$r2Vox_Prop <- r2Aov_table$nVox_r2sel/r2Aov_table$nVox
+r2Aov_table$dropMax_sum_Prop <- r2Aov_table$dropMax_sum/r2Aov_table$nVox
+r2Aov_table$Aov_nVox_Prop <- r2Aov_table$Aov_SigVox/r2Aov_table$nVox
+
+CorrTable_Subj <- ddply(vonStp1DatSel_subj, .(SubjNew, ROIs), summarise,
+                   nVox = length(Voxel),
+                   Corr_subj = mean(CORR),
+                   steCorr_subj = std(CORR)/sqrt(nVox))
+
+
+dev.new()
+ggplot(CorrTable_Subj, aes(x = SubjNew, y = Corr_subj)) +
+  theme_few() +
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  geom_point(aes(y=Corr_subj), size=1.5) +
+  geom_errorbar(aes(ymin=Corr_subj-steCorr_subj, ymax=Corr_subj+steCorr_subj), width=0.05) +
+  #ylim (0,0.6) +
+  labs(title = "Spearman correlation between odd_even blocks within a voxel \n
+       across all significant voxels (HighRes)",
+       x = "Subjects",
+       y = "Correlation")
+
+
+print(r2quant)
+print(r2Aov_table)
+print(CorrTable_Subj)
+
+```
+
+**** calculate significant voxels in overall rOFA) ****
+```{r propArea}
+Subj <- c("S01","S02","S03","S04","S05","S06","S07")
+Area <- c(1054/2340, 1144/2500, 1954/3272,1337/2916,1194/3150, 1603/2043, 1647/6238)
+r2Aov_percent <- r2AovTable$r2Aov_percent
+
+propArea <- data.frame(Subj, Area,r2Aov_percent)
+propArea$sigArea <- propArea$Area*propArea$r2Aov_percent
+
+dev.new()
+ggplot(propArea, aes(x = Subj, y = sigArea)) +
+  theme_few() +
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  ylim (0,0.15) +
+  labs(title = "modulated-voxels coverage ratio in rOFA",
+       x = "Subjects",
+       y = "coverage ratio")
+
+
+```
+
+
+*** Average BOLD respones of all selected voxel after Stp1 model fitting***
+```{r avgAllSelVox}
+
+# seq of voxels
+vonStp1DatSel2 <- vonStp1DatSel
+vonStp1DatSel_ROI <- vonStp1DatSel2[with(vonStp1DatSel2, order(prefOrient, SubjNew, ROIs, Voxel, FitVM)), ] # trick for sort
+
+seqDatSel <- ddply(vonStp1DatSel_ROI, .(SubjNew, ROIs), transform,
+                   seqVox = rep(1:length(unique(Voxel)), each = length(unique(FitVM))))
+
+
+# heat plot of all voxels
+dev.new()
+myPalette <- colorRampPalette(rev(brewer.pal(11, "Spectral")))
+ggplot(seqDatSel, aes(x=Orient, y=seqVox, fill=(avgValue))) + 
+  theme_few() +
+  facet_grid(~SubjNew, scales='free',space = "free" ) + 
+  geom_tile(aes(fill=(avgValue))) + 
+  scale_fill_gradientn(name = "BOLD (normalized)", colours = myPalette(100)) +
+  #scale_fill_gradientn(colours = myPalette(1000), trans = 'norm', breaks = c(0,0.5)) +
+  #ylim(0,80) +                                 
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  theme(axis.text.x  = element_text(size=5)) +
+  labs(title = "BOLD resp distribution of voxels (rOFA, HighRes)",
+       x = "orientation",
+       y = "voxel")
+
+```
+
+
+*** Average BOLD responses for merge 5 orientations ***
+```{r avgAllSelVox}
+
+MegDeg_Vox <- ddply(vonStp1DatSel, .(SubjNew, ROIs, Voxel, FitVM2), summarise,
+                    avg = mean(avgValue),
+                    ste = mean(stdPeak),
+                    Orientation = Orient[FitVM2==FitVM])
+
+MegDeg_Vox2 <- ddply(MegDeg_Vox, .(SubjNew, ROIs, Voxel), summarise,
+                    maxValue = unique(max(avg)),
+                    prefOrient = Orientation[avg==maxValue])
+                    
+MegDeg_Vox3 <- merge(MegDeg_Vox, MegDeg_Vox2, by=c("SubjNew","ROIs","Voxel"))
+
+MegDegMaxSel <- ddply(MegDeg_Vox3, .(SubjNew, ROIs, prefOrient), summarise,
+                              nVox = length(unique(Voxel)),
+                              avgMaxBOLD = mean(maxValue))
+
+MegDegMaxSel <- ddply(MegDegMaxSel, .(SubjNew, ROIs), transform,
+                              sumVox = sum(nVox))
+MegDegMaxSel$percentVox <- round(MegDegMaxSel$nVox/MegDegMaxSel$sumVox, digits=5)*100
+
+
+                    
+avgMegDeg_Subj <- ddply(MegDeg_Vox3, .(SubjNew, ROIs, FitVM2), summarise,
+                        nVox = length(unique(Voxel)),
+                        avgBOLD = mean(avg),
+                        steBOLD = std(avg)/sqrt(nVox),
+                        Orientation = mean(Orientation))
+                        
+
+
+#pdf()
+dev.new()
+ggplot(avgMegDeg_Subj, aes(x = Orientation, y = avgBOLD)) +
+  theme_few() +
+  facet_wrap(SubjNew~ROIs, scales='free') + 
+  geom_line(color='red', size=1.5) +
+  geom_point(aes(y=avgBOLD), size=1.5) +
+  geom_errorbar(aes(ymin=avgBOLD-steBOLD, ymax=avgBOLD+steBOLD), width=0.05) +
+  ylim(0,0.5) +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  labs(title = "Averaged BOLD responses in each subject (HighRes)",
+       x = "orientation",
+       y = "signal change % (normalized)")
+
+
+# sort data based on the prefOrient
+# seq of voxels
+
+MegDeg_VoxSelROI <- droplevels(subset(MegDeg_Vox3, ROIs=="rOFA"))
+MegDeg_VoxSelROI2 <- MegDeg_VoxSelROI[with(MegDeg_VoxSelROI, order(prefOrient, SubjNew, ROIs, Voxel, FitVM2)), ] # trick for sort
+
+MegDegSeqSel <- ddply(MegDeg_VoxSelROI2, .(SubjNew, ROIs), transform,
+                   seqVox = rep(1:length(unique(Voxel)), each = length(unique(FitVM2))))
+
+
+# heat plot of all voxels
+dev.new()
+myPalette <- colorRampPalette(rev(brewer.pal(11, "Spectral")), space="Lab")
+ggplot(MegDegSeqSel, aes(x=Orientation, y=seqVox, fill=(avg))) + 
+  theme_few() +
+  facet_grid(~SubjNew, scales="free",space = "free" ) + 
+  geom_tile(aes(fill=(avg))) + 
+  #ylim(0,80) +
+  scale_fill_gradientn(name = "BOLD (normalized)", colours = myPalette(100)) +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  theme(axis.text.x  = element_text(size=5)) +
+  labs(title = "BOLD resp distribution of voxels (rOFA, LowRes)",
+       x = "orientation",
+       y = "voxel")
+
+
+MegDegMaxSel_OneROI <- droplevels(subset(MegDegMaxSel, ROIs=="rOFA"))
+
+dev.new()
+ggplot(MegDegMaxSel_OneROI, aes(x = prefOrient, y=nVox)) + 
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  facet_wrap(SubjNew~ROIs, scales='free') + 
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  ylim(0,50) +
+  labs(title = "Number of voxels of each prefer orientation (LowRes)") +
+  ylab("number of voxels") + 
+  xlab("orientation")
+
+
+dev.new()
+ggplot(MegDegMaxSel_OneROI, aes(x = prefOrient, y=percentVox)) + 
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  facet_wrap(~SubjNew, scales='free') + 
+  ylim(0,100) +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  labs(title = "Percentage of voxels in each prefer orientation (LowRes)") +
+  ylab("% voxels") + 
+  xlab("orientation")
+
+```
+
+
+
+*** find max peaks of each voxels based on Stp1 fitting *** 
+````{r maxpeaks_fromStp1}
+vonStp1DatSel_rOFA <- droplevels(subset(vonStp1DatSel, ROIs=="HR_rOFA"))
+
+voxFitCurveSel <- ddply(vonStp1DatSel_rOFA, .(SubjNew, ROIs, Voxel, FitVM), summarise,
+                        FitVM2 = FitVM2,
+                        zBOLD = mean(avgValue),
+                        steBOLD = mean(stePeak))
+
+voxMaxSel <- ddply(voxFitCurveSel, .(SubjNew, ROIs, Voxel), summarise,
+                   maxBOLD = max(zBOLD),
+                   seBOLD = steBOLD[zBOLD==maxBOLD],
+                   prefOrient = FitVM[zBOLD==maxBOLD])
+                   
+avgVoxMaxSel <- ddply(voxMaxSel, .(SubjNew, prefOrient), summarise,
+                              nVox = length(Voxel),
+                              avgMaxBOLD = mean(maxBOLD),
+                              avgSeBOLD = mean(seBOLD))
+
+avgVoxMaxSel <- ddply(avgVoxMaxSel, .(SubjNew), transform,
+                              sumVox = sum(nVox))
+
+avgVoxMaxSel$percentVox <- round(avgVoxMaxSel$nVox/avgVoxMaxSel$sumVox, digits=5)*100
+
+```
+
+
+```{r plotFig}
+
+## distribution of voxel numbers of each prefer orientation
+dev.new()
+ggplot(avgVoxMaxSel, aes(x = factor(prefOrient), y=nVox)) + 
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  facet_wrap(~SubjNew, scales='free') + 
+  #scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  labs(title = "Number of voxels of each prefer orientation (HighRes)") +
+  ylab("number of voxels") + 
+  xlab("orientation")
+
+
+
+## voxel distribution of orientions
+dev.new()
+ggplot(voxMaxSel, aes(x = prefOrient, y = maxBOLD)) +
+  theme_few() +
+  geom_point() +
+  facet_wrap(~SubjNew, scales='free') + 
+  ylim(0,1) +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  labs(title = "distribution of voxels (HighRes)",
+        x = "orientation",
+        y = "Ampltitude")
+
+
+# ## distribution of amp of number of each prefer orientation by coord_polar
+# dev.new()
+# ggplot(avgVoxMaxSel_dropAmp, aes(x = prefOrient, y = avgMaxBOLD, fill=avgMaxBOLD)) +
+#   #geom_histogram(binwidth=45, stat="identity") + 
+#   #geom_point() +
+#   facet_wrap(~SubjNew, scales='free') + 
+#   geom_bar(alpha= 0.5, stat="identity") +
+#   coord_polar(theta = "x", start=pi, direction = 1)+
+#   scale_y_continuous(breaks = seq(0,15,3), limits=c(0, 15)) +
+#   scale_x_continuous(limits=c(-180,180),breaks=seq(-90, 90, 45)) +
+#   labs(title = "",
+#        x = "orientation",
+#        y = "count")
+
+```
+
+
+```{r plot DemoVoxel}
+
+# vonStp1DatSel2 <- ddply(vonStp1DatSel2, .(SubjNew, ROIs, Voxel, FitVM), transform,
+#                         steValue = stdPeak/sqrt(nlength))
+
+OneSubj <- droplevels(subset(vonStp1DatSel2, SubjNew=="S04"))
+randVoxNum=7 # random select voxels to plot fitting curves
+OneSubj$Voxel <- as.factor(OneSubj$Voxel)
+someVox2plot <- droplevels(subset(OneSubj, Voxel %in% sample(levels(Voxel),randVoxNum)))
+#someVox2plot <- droplevels(subset(OneSubj, Voxel==33))
+dev.new()
+ggplot(data=someVox2plot, aes(x=Orient, y=avgValue)) +
+  theme_few() + 
+  facet_wrap(~Voxel, scale='free') + 
+  geom_line(color='red', size=1.5) +
+  geom_point(aes(y=avgValue), size=1.5) +
+  geom_line(aes(y=avgValue), color='black', size=0.5) +
+  ylim(0, 0.8) +
+  ylab("signal change % (normalized)") +
+  geom_errorbar(aes(ymin=avgValue-stdPeak, ymax=avgValue+stdPeak), width=0.05) +
+  ggtitle("Representive voxel (lOFA, LowRes)") +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) 
+
+
+```
+
+
+```{r modIndx}
+
+# (max-min)/(max+min)
+ModulatDat <- ddply(voxFitCurveSel, .(SubjNew, Voxel), summarise,
+                    Max = max(unique(zBOLD)),
+                    Min = min(unique(zBOLD)),
+                    Mean = mean(zBOLD),
+                    Mod.max_min = (Max-Min)/(Max+Min),
+                    Mod.max_mean = Max/Mean)
+
+dev.new()
+ggplot(ModulatDat, aes(x=Mod.max_mean)) +
+  geom_histogram(binwidth = 0.1) +
+  facet_wrap(~SubjNew) +
+  geom_line(stat="density") + 
+  labs(title = "Modulation Index (Max/Mean)")
+
+dev.new()
+ggplot(ModulatDat, aes(x=Mod.max_min)) +
+  geom_histogram(breaks=seq(0, 1, by=0.05)) +
+  facet_wrap(~SubjNew) +
+  #xlim(c(0, 1)) +
+  geom_density(col=2) +
+  scale_x_continuous(breaks=seq(0,1, by=0.3))+
+  #geom_line(stat="density") + 
+  labs(title = "Modulation Index (Max-Min/Max+Min)")
+
+```
+
+
+```{r similarityCorr}
+pairCor_fun <- function(x) {
+  #browser()
+  params <- unique(x$Voxel)
+  #params <- levels(x$uniqVoxel) 
+  params.grid <- expand.grid(params, params)  # make list of orientation pairs (90/90, 90/75, 90/60, 90/45, ...)
+  cor.results <- data.frame()
+  for (i in 1:nrow(params.grid)) {
+    # loop through each row of params.grid
+    x.param <- as.character(params.grid$Var1)[i]  # get the x parameter as a character
+    y.param <- as.character(params.grid$Var2)[i]  # get the y parameter as a character
+    x.Orient <- unique(subset(x, Voxel == x.param)$OrientDeg)
+    y.Orient <- unique(subset(x, Voxel == y.param)$OrientDeg)
+    x.values <- subset(x, Voxel == x.param)$zBOLD  
+    y.values <- subset(x, Voxel == y.param)$zBOLD  
+    #     lengths <- max(c(length(x.values), length(y.values)))
+    #     length(x.values) <- lengths
+    #     length(y.values) <- lengths
+    #     xy.val <- data.frame(cbind(x.values, y.values))
+    #    browser()
+    xy.cor = cor(x.values, y.values, method = "spearman") # compare vector to vector
+    cor.results <- rbind(cor.results, data.frame(Voxel_X = x.param, Voxel_Y = y.param, 
+                                                 prefOrient_X = x.Orient, prefOrient_Y = y.Orient, 
+                                                 Rho = xy.cor, row.names = NULL))
+    
+    }
+  return(cor.results)
+  }
+
+# prepare data to do correlation
+voxFitCurveSel_prefOrient <- merge(voxFitCurveSel, voxMaxSel)
+voxFitCurveSel_prefOrient$OrientDeg <- round(rad2deg(voxFitCurveSel_prefOrient$prefOrient))
+voxFitCurveSel_prefOrient$Voxel <- as.factor(voxFitCurveSel_prefOrient$Voxel)
+voxFitCurveSel2Corr <- droplevels(subset(voxFitCurveSel_prefOrient, select=c('SubjNew','Voxel','OrientDeg','FitVM','zBOLD')))
+
+#a <- droplevels(subset(voxFitCurveSel2Corr, SubjNew=='S05'))
+
+VMmeg.corr <- ddply(voxFitCurveSel2Corr, .(SubjNew), pairCor_fun)
+
+VMmeg.corr2 <- ddply(VMmeg.corr, .(SubjNew, prefOrient_X, prefOrient_Y), summarise,
+                    Corr = mean(Rho))
+VMmeg.corr2 <- droplevels(subset(VMmeg.corr2, SubjNew%in%c("S02","S03","S04","S06","S08")))
+VMmeg.corr_all <- ddply(VMmeg.corr, .(prefOrient_X, prefOrient_Y), summarise,
+                    Corr = mean(Rho))
+
+
+
+## indv subj
+VMmeg.corr_oneSubj <- droplevels(subset(VMmeg.corr2, SubjNew=="S05"))
+dev.new()
+ggplot(VMmeg.corr2, aes(as.factor(prefOrient_X), as.factor(prefOrient_Y), fill = Corr)) +
+  geom_tile() + 
+  facet_wrap(~SubjNew) +
+  #scale_fill_gradient(low="blue", high="yellow") +
+  scale_fill_gradient2(low = "#0000FF", mid = "#FFFFFF", high ="#FF0000", 
+                       midpoint = 0, space = "rgb", guide = "colourbar") + 
+  scale_x_discrete(breaks=c(-90, -45, 0, 45, 90), labels= c(-90, -45, 0, 45, 90)) +
+  scale_y_discrete(breaks=c(-90, -45, 0, 45, 90), labels= c(-90, -45, 0, 45, 90))+
+  labs(title = "Correlation matrix of prefer orientations (S05)",
+       x = "orientations",
+       y = "orientations")
+
+
+
+# avg subjs
+dev.new()
+ggplot(VMmeg.corr_all, aes(as.factor(prefOrient_X), as.factor(prefOrient_Y), fill = Corr)) +
+  geom_tile() + 
+  #facet_wrap(~SubjNew) +
+  scale_fill_gradient2(low = "#0000FF", mid = "#FFFFFF", high ="#FF0000", 
+                       midpoint = 0, space = "rgb", guide = "colourbar") + 
+  scale_x_discrete(breaks=c(-90, -45, 0, 45, 90), labels= c(-90, -45, 0, 45, 90)) +
+  scale_y_discrete(breaks=c(-90, -45, 0, 45, 90), labels= c(-90, -45, 0, 45, 90))+
+  labs(title = "Correlation matrix of prefer orientations (N=8)",
+       x = "orientations",
+       y = "orientations")
+
+corName <- '/Users/tancy/Dropbox/fmridata_r/FFTdata/VMCorr_LowRes_rOFA.csv'
+ write.csv(VMmeg.corr, file = corName, row.names= FALSE)
+
+```
+
+
+
+```{r avgAllSubj}
+
+VoxMax_allSubj <- ddply(avgVoxMaxSel_dropAmp, .(prefOrient), summarise,
+                        nSubj = length(unique(SubjNew)),
+                        avgMax = mean(avgMaxBOLD),
+                        seMax = mean(avgSeBOLD),
+                        percentVoxs = mean(percentVox),
+                        steVoxs = std(percentVox)/sqrt(nSubj))
+
+
+dev.new()
+ggplot(VoxMax_allSubj, aes(x = prefOrient, y=avgMax)) + 
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  geom_errorbar(aes(ymin=avgMax-seMax, ymax=avgMax+seMax), width=0.05) +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  labs(title = "Distribution of amp (LowRes all subjs=8)") +
+  ylim(0,0.6) +
+  ylab("average Amp") + 
+  xlab("orientation")
+
+## distribution of voxel numbers of each prefer orientation
+## remove voxels with high amp
+dev.new()
+ggplot(VoxMax_allSubj, aes(x = prefOrient, y=percentVoxs)) + 
+  geom_bar(stat="identity", fill="lightblue", colour="black") +
+  geom_errorbar(aes(ymin=percentVoxs-steVoxs, ymax=percentVoxs+steVoxs), width=0.05) +
+  scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  labs(title = "percentage of voxels in each prefer orientation (LowRes all subjs = 8)") +
+  ylab("% voxels") + 
+  xlab("orientation")
+
+
+```
+
+
+
+```{r outputTable}
+
+r2quant[,-1] <- round(r2quant[,-1],3)
+VoxMax_allSubj[,-1] <- round(VoxMax_allSubj[,-1],3) # rounding all numeric in a dataframe
+
+tab1 <- tableGrob(r2quant)
+tab2 <- tableGrob(percetTable)
+tab3 <- tableGrob(FFTnoiseSel_r2cut)
+tab4 <- tableGrob(AovTable)
+tab5 <- tableGrob(VoxMax_allSubj)
+
+#dev.new()
+grid.arrange(tab1,tab2, ncol=1)
+grid.arrange(tab3, tab4, ncol=1)
+grid.arrange(tab5, ncol=1)
+
+dev.off() # close pdf()
+
+
+```
+
+#```{r plot3DScatter}
+#MIcolvar  <-  color.scale(MI_table$MIvalue,c(0,1,1),c(1,1,0),c(0,1,0))
+library(plot3D)
+library(rgl)
+ParCoord <- merge(ParWidthBestSel_wide, FitCurveSel.Coord)
+
+SelVox3D <- ddply(ParCoord, .(Voxel, md), summarise,
+                        amp = mean(value.amp),
+                        prefOr = mean(prefOrDeg),
+                        width = mean(widthDeg),
+                        x = mean(x),
+                        y = mean(y),
+                        z = mean(z)
+                        )
+
+c=cut(SelVox3D$prefOr, breaks=128)
+MIcolvar  <-  heat.colors(60)[as.numeric(c)]
+open3d()
+clear3d("all")
+bg3d(color="#887777")
+light3d()
+plot3d(SelVox3D$x,SelVox3D$y, SelVox3D$z, type='s',col=MIcolvar, size=1, lit=FALSE)
+
+# Fit a plane to the data
+fit <- lm( SelVox3D$z~SelVox3D$x + SelVox3D$y)
+coefs <- coef(fit)
+a <- coefs['SelVox3D$x']
+b <- coefs['SelVox3D$y']
+c <- -1
+d <- coefs['(Intercept)']
+planes3d(a, b, c, d, alpha=0.2)
+
+
+#scatter3D(SelVox3D$x,SelVox3D$y, SelVox3D$z, colvar=SelVox3D$prefOr, theta =15, phi =0 )
+
+
+```
+
+
+## make a matrix to see the how neighbor voxel's orient close to each other
+## ideally, consider closest 26 neighbors
+## if a voxel contains multiple orientations, we treat each orientation as single unit, ignore whether they are in the same voxel
+=======================
+      90  45 0 -45 -90
+| 90 | 0  1  2  3   4
+| 45 | 1  0  1  2   3
+|  0 | 2  1  0  1   2
+|-45 | 3  2  1  0   1
+|-90 | 4  3  2  1   0   
+=========================
+#```{r interVox}
+fitVMsel <- SelVox3D
+# create a dataframe in which each voxel is corresponding to their neighbors 
+# including voxelself
+
+InterDat <- data.frame()
+for (ixRow in 1:nrow(fitVMsel)) {
+  #browser()
+  oneDat <- fitVMsel[ixRow, ] # subset single row
+  datX = oneDat$x
+  datY = oneDat$y
+  datZ = oneDat$z
+  neighSelX <- subset(fitVMsel, fitVMsel$x==datX & fitVMsel$y>=datY-3 &  fitVMsel$y<=datY+3 & fitVMsel$z>=datZ-3 & fitVMsel$z<=datZ+3)
+  neighSelY <- subset(fitVMsel, fitVMsel$y==datY & fitVMsel$x>=datX-3 &  fitVMsel$x<=datX+3 & fitVMsel$z>=datZ-3 & fitVMsel$z<=datZ+3)
+  neighSelZ <- subset(fitVMsel, fitVMsel$z==datZ & fitVMsel$y>=datY-3 &  fitVMsel$y<=datY+3 & fitVMsel$x>=datX-3 & fitVMsel$x<=datX+3)
+  neighSel <- rbind(neighSelX, neighSelY, neighSelZ)
+  neighSel <- subset(neighSel, select=c("Voxel", "prefOr"))
+  colnames(neighSel) <- c("neighVoxel", "neighPrefOr")
+  selfPrefOr <- oneDat$prefOr
+  Voxel <- oneDat$Voxel
+  md <- oneDat$md
+  #ParSeq <- oneDat$ParSeq
+  meg <- cbind(Voxel, md, selfPrefOr, neighSel)
+  InterDat  <-rbind.fill(InterDat, meg)
+  
+  }
+
+# remove neighVoxel is selfVoxel
+dropDatIndx <- which(InterDat$Voxel==InterDat$neighVoxel & InterDat$selfPrefOr==InterDat$neighPrefOr) # find same voxel & neighPrefOr
+InterDatSel <- InterDat[-c(dropDatIndx), ]
+#head(InterDatSel)
+
+
+# remove repeated neighbor voxels
+RelatedVox <- ddply(InterDatSel, .(Voxel, neighVoxel), summarise,
+                    selfOriet = mean(selfPrefOr),
+                    neighOriet = mean(neighPrefOr)
+                    )
+
+# categorize self and neighbor orientations
+splitRange <- seq(-90, 90, length.out=6) # 90 45 0 -45 -90
+Cutlabels <- c("-90", "-45", "0", "45", "90")
+RelatedVox$centralPref <- cut(RelatedVox$selfOriet, breaks =splitRange, label=Cutlabels)
+RelatedVox$neighPref <- cut(RelatedVox$neighOriet, breaks =splitRange, label=Cutlabels)
+
+# calculate the frequency of orientation of neighbors of each orientations
+selfNeighTable <- count(RelatedVox, c("centralPref", "neighPref"))
+selfNeighTable <- ddply(selfNeighTable, .(centralPref), transform,
+                  sum = sum(freq))
+selfNeighTable$prop <- round(selfNeighTable$freq/selfNeighTable$sum, digit=4)
+
+
+# tranform to matrix
+selfNeighColumn <- selfNeighTable[ , !(colnames(selfNeighTable) %in% c("freq", "sum"))] # drop non used columns
+selfNeighTable2 <- reshape(selfNeighColumn, timevar = "neighPref", direction = "wide", v.names = "prop", idvar = "centralPref")
+#dev.new()
+ggplot(selfNeighTable, aes(neighPref, centralPref, fill = prop)) +
+  geom_tile() + 
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(title = "percentage of neighbor orientations")
+  
+#selfNeighTable2
+
+
+
+```
+

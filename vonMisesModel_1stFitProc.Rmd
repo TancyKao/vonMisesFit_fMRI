@@ -1,0 +1,442 @@
+---
+title: "vonMisesModel_1stStepFitData"
+output: html_document
+---
+
+```{r loadData}
+rm(list=ls())
+library(pracma)
+library(ggplot2)
+library(ggthemes)
+#library(nlme)
+library(plyr)
+library(reshape2)
+#library(circular)
+#library(CircStats)
+#library(stats4)
+#library(bbmle)
+library(proto)
+library(nls2)
+library(scales)
+#library(minpack.lm)
+library(gridExtra)
+options(device='quartz') # open new plot window
+#setwd("~/Dropbox/withArman/FFTvoxel") # working directory
+setwd("/Users/tancy/Desktop/FFTprocess/FFTvoxel") # working directory
+
+rawData <- read.csv('/Users/tancy/Desktop/FFTprocess/SigCh_HighRes_8s2.csv') # load all data
+
+unique(rawData$Subj)
+# select single subject data and drop unuseful columns
+BRtestData <- droplevels(subset(rawData, Subj=="S06", select = -c(orient45, ampval, phval, covval)))
+
+# create a new dataframe for model fitting of each block
+Block_fun <- function(x, y) rep(1:x, each = length(unique(y)))
+
+# get number of blocks in each voxel
+VoxBlock <- droplevels(ddply(BRtestData, .(Voxel), summarise,
+                                nblock = length(SingleVolume)/length(unique(SingleVolume))))
+
+# generate a data with sequence of blocks and sequence of HRF                
+NewBRtestData <- droplevels(ddply(BRtestData, .(Voxel), transform,
+                               Block = Block_fun(VoxBlock$nblock[1], SingleVolume),
+                               seqHRF = seq(1, length(HRF))))
+
+
+head(NewBRtestData)
+
+
+saveCSV1 <- 'fitVM_Stp1_S06_8s_sm_HR_kap10pi.csv'
+saveCSV2 <- 'fitVM_Stp1_S06_8s_sm_HR_kap10pi_RData.csv'
+savRDdata <- 'fitVM_Stp1_S06_8s_sm_HR_kap10pi.RData'
+
+```
+
+
+*** temporal smoothing TS ***
+Moving averages for linear filters
+$$
+Tt = 1/2a+1\Sigma{a, i=-a} Xt+i
+$$
+the filtered value of a time series at a given period \tau is represeted by the average of the values
+{x\tau-a,...,x\tau,...,x\tau+a}. The coefficients of the filtering are {1/(2a+1), ..., 1/(2a+1)}.
+```{r smoothTS}
+VolSMdata <- droplevels(ddply(NewBRtestData, .(Voxel), function(datTS){
+  #browser()
+  smTS <- ts(datTS$HRF, start=1, frequency=length(unique(NewBRtestData$Block)))
+  linfitTS <- filter(smTS, filter=rep(1/3,3), method="conv", side=2) # apply moving average 
+  linfitTS[is.na(linfitTS)] <- mean(linfitTS, na.rm=TRUE)
+  seqHRF <- datTS$seqHRF
+  linBind <- cbind(seqHRF, linfitTS)  
+  }))
+
+# merge with original data
+NewBRtestData$seqHRF <- as.numeric(NewBRtestData$seqHRF)
+NewBRtestData_SM <- merge(NewBRtestData, VolSMdata, by=c("Voxel","seqHRF"))
+NewBRtestData_SM <- arrange(NewBRtestData_SM,Voxel,seqHRF)
+head(NewBRtestData_SM)
+
+# randSM <- droplevels(subset(NewBRtestData_SM, r2>.06))
+# randSM2 <- (subset(randSM, Voxel==c(13)))
+# #plot raw HFR and smooth HRF
+# dev.new()
+# ggplot(randSM2) + 
+#   geom_point(aes(x=seqHRF, y=HRF, colour="rawHRF"), size = 0.5) +
+#   geom_line(aes(x=seqHRF, y=HRF, colour="rawHRF")) +
+#   #geom_point(aes(x=seqHRF, y=linfitTS, colour="smoothHRF"), size= 0.1) +
+#   geom_line(aes(x=seqHRF, y=linfitTS, colour="smoothHRF"), size= 0.5) +
+#   facet_wrap(~Voxel, scales='free') + 
+#   scale_colour_manual("",values=c("smoothHRF"="red","rawHRF"="blue"))
+
+```
+
+
+# get zScore 
+```{r zScore}
+Zdata <- droplevels(ddply(NewBRtestData_SM, .(Voxel), transform,
+                          zSigCh = scale(HRF),
+                          zSigSM = scale(linfitTS)))
+head(Zdata)
+#hist(Zdata$zSigCh) # plot histogram
+
+avgZSigCh <- droplevels(ddply(Zdata, .(Voxel, SingleVolume), summarise,
+                              nlength = length(unique(Block)),
+                              avgSigCh = mean(zSigCh),
+                              avgSigSM = mean(zSigSM),
+                              steSigSM = sd(zSigSM)/sqrt(nlength)))
+
+rm(list=c("BRtestData", "VolSMdata", "NewBRtestData", "NewBRtestData_SM"))
+   
+```
+
+
+*** summary of 1st_fitVM result***
+## get paramters and statistics to dataframe
+## 1) We fit fixed 13 VM (-pi/2 to pi/2) of each block(trial) 
+## 2) Then, we got maxAmp of each VM in each block
+## 3) We used 13 maxAmp to get "fitted BOLD resp" of each block
+## 4) Finally, we average "fitted BOLD resp" across all blocks
+## 5) We can get 13 orient(-90, -75, -60...0,..,90) BOLD resp of each voxel
+```{r fitVMresult}
+
+
+#*** dat to fit VM ***
+#```{r ModelFit}
+datToFit <- Zdata
+head(datToFit)
+length(unique(datToFit$Voxel))
+vonMisesFit <- vonMises_1stFitData(datToFit)
+
+
+vonFitCurve <- data.frame()
+nVol <- length(unique(datToFit$SingleVolume)) # create seq of nVol
+for (iVox in 1:length(vonMisesFit)){
+  vonFitBlock <- data.frame()
+  for (iBlock in 1:length(unique(datToFit$Block))){
+     IdvCurve <-  data.frame(do.call(rbind, lapply(1:length(vonMisesFit[[iVox]][[2]][[iBlock]][[2]]), function(iVM) 
+      cbind(vonMisesFit[[iVox]]$Voxel, vonMisesFit[[iVox]][[2]][[iBlock]]$Block,c(1:nVol), rep(iVM,nVol),
+            vonMisesFit[[iVox]][[2]][[iBlock]][[2]][[iVM]]))),stringsAsFactors=FALSE) ### all the variables become "factors", add "stringsAsFactors=FALSE"
+
+       vonFitBlock <- rbind(vonFitBlock, IdvCurve)                 
+    }
+  
+  vonFitCurve <- rbind(vonFitCurve,vonFitBlock)
+}   
+
+
+# modify the column names of each dataframe
+colnames(vonFitCurve) <- c("Voxel", "Block", "SingleVolume", "FitVM", "value")
+
+# transform some variables as numeric format
+vonFitCurve$value <- as.numeric(vonFitCurve$value)
+vonFitCurve$FitVM <- as.numeric(vonFitCurve$FitVM)
+vonFitCurve$Voxel <- as.factor(vonFitCurve$Voxel)
+vonFitCurve$Block <- as.factor(vonFitCurve$Block)
+
+
+
+maxPeakVM_Block <- ddply(vonFitCurve, .(Voxel, Block, FitVM), summarise, 
+                         maxValue = max(value),
+                         minValue = min(value),
+                         Value = ifelse(abs(maxValue)>abs(minValue),maxValue,minValue))
+
+# avg maxPeak across all block
+MaxPeakVM_avg <- ddply(maxPeakVM_Block, .(Voxel, FitVM), summarise,
+                         nlength = length(unique(Block)),
+                         avgValue = mean(Value),
+                         stePeak = sd(Value)/sqrt(nlength))
+
+
+# get maxPeak of each fitVM in each block
+# maxPeakVM_Block <- ddply(vonFitCurve, .(Voxel, Block, FitVM), summarise, 
+#                          maxValue = max(value))
+# 
+# # avg maxPeak across all block
+# MaxPeakVM_avg <- ddply(maxPeakVM_Block, .(Voxel, FitVM), summarise,
+#                          nlength = length(unique(Block)),
+#                          avgValue = mean(maxValue),
+#                          stdPeak = sd(maxValue)/sqrt(nlength))
+
+
+
+
+# add name of Subj ROI, xyz, and orientation in the dataframe
+Coord <- ddply(datToFit, .(Voxel), summarise,
+               x = mean(x), y = mean(y), z = mean(z))
+
+MaxPeakVM_avg$Orient <-seq(-pi/2, pi/2, length.out = length(unique(MaxPeakVM_avg$FitVM))) # add radious of seq to data 
+
+# ## save data as csv
+
+fitVM_BOLD <- merge(MaxPeakVM_avg, Coord, by="Voxel")  
+fitVM_BOLD$Subj <- unique(datToFit$Subj)
+fitVM_BOLD$ROIs <- unique(datToFit$ROIs)
+fitVM_BOLD <- arrange(fitVM_BOLD, Voxel, FitVM)
+write.csv(fitVM_BOLD, file = saveCSV1, row.names= FALSE)
+write.csv(vonFitCurve, file = saveCSV2, row.names= FALSE)
+save(vonMisesFit, file=savRDdata) # save list info
+
+```
+
+
+```{r plotVM}
+## random select 10 voxels to plot
+avgZSigCh$Voxel <- as.factor(avgZSigCh$Voxel)
+avgZSigChSel <- droplevels(subset(avgZSigCh, ROIs=='rOFA')) 
+avgZSigChSel2 <- droplevels(subset(avgZSigChSel, Voxel%in%sample(levels(Voxel),10))) # random select 10 voxels to plot
+maxAmpVMSel <- MaxPeakVM_avg[MaxPeakVM_avg$Voxel %in% avgZSigChSel$Voxel, ] # get same voxels from avgZSigChSel
+#maxAmpVMSel <- MaxPeakVM_avg
+### plot original avg curve
+dev.new()
+ggplot(data=avgZSigChSel, aes(x=SingleVolume, y=avgSigSM)) +
+  theme_few() + 
+  facet_wrap(~Voxel) + 
+  geom_line(color='red') +
+  geom_hline(aes(yintercept=0)) +
+  ylim(-1, 1) +
+  geom_errorbar(aes(ymin=avgSigSM-steSigSM, ymax=avgSigSM+steSigSM), width=0.1) +
+  ylab("signal change % (normalized)") 
+  
+### recover the signal from max amp of each VM fitting
+dev.new()
+ggplot(data=maxAmpVMSel, aes(x=FitVM, y=avgValue)) +
+  theme_few() + 
+  facet_wrap(~Voxel, scale='free') + 
+  geom_errorbar(aes(ymin=avgValue-stdPeak, ymax=avgValue+stdPeak), width=0.1) +
+  geom_line(color='green') +
+  geom_point(stat='identity') +
+  geom_hline(aes(yintercept=0)) +
+  ylim(-1, 1) +
+  #scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  ylab("Max Amp from models") 
+
+```
+
+# check single trial fitting 
+```{r plotSingleTrialVM}
+### recover the signal from max amp of each VM fitting
+ 
+datToFit$newZsigSM <- datToFit$zSigSM
+datToFit$newZsigSM <- ifelse(datToFit$newZsigSM<0, 0, datToFit$newZsigSM) # treat negative signal as zero
+
+
+dev.new()
+ggplot(data=datToFit, aes(x=SingleVolume, y=zSigSM)) +
+  theme_few() + 
+  facet_wrap(Voxel~Block) + 
+  geom_line(color='red') +
+  geom_hline(aes(yintercept=0)) +
+  #geom_errorbar(aes(ymin=avgSigSM-steSigSM, ymax=avgSigSM+steSigSM), width=0.1) +
+  ylab("signal change % (normalized)") +
+  ggtitle("original BOLD resp in each block")
+
+
+### plot each fit curve in each block
+vonFitCurve$Block <- as.numeric(vonFitCurve$Block)
+dev.new()
+ggplot(data=vonFitCurve, aes(x=as.numeric(SingleVolume), y=value, group=FitVM)) +
+  theme_few() + 
+  facet_wrap(Voxel~Block) + 
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("13 FitCurves in each block")
+  
+
+### plot avg fit curves in each block 
+avgCurve <- ddply(vonFitCurve, .(Voxel, Block, SingleVolume), summarise,
+                  avgFit = mean(value))
+dev.new()
+ggplot(data=avgCurve, aes(x=as.numeric(SingleVolume), y=avgFit)) +
+  theme_few() + 
+  facet_wrap(Voxel~Block) + 
+  #geom_errorbar(aes(ymin=avgVM-steVM, ymax=avgVM+steVM), width=0.1) +
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("avg FitCurves in each block")
+
+
+### plot avg curve across all block
+avgCurveAll <- ddply(avgCurve, .(Voxel, SingleVolume), summarise,
+                  avgVM = mean(avgFit))
+dev.new()
+ggplot(data=avgCurveAll, aes(x=as.numeric(SingleVolume), y=avgVM)) +
+  theme_few() + 
+  #facet_wrap(Voxel~Block) + 
+  #geom_errorbar(aes(ymin=avgVM-steVM, ymax=avgVM+steVM), width=0.1) +
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("avg FitCurves across all blocks")
+
+
+### plot max curve in each block
+maxCurve <- ddply(vonFitCurve, .(Voxel, Block, SingleVolume), summarise,
+                  maxVM = max(value))
+dev.new()
+ggplot(data=maxCurve, aes(x=as.numeric(SingleVolume), y=maxVM)) +
+  theme_few() + 
+  facet_wrap(Voxel~Block) + 
+  #geom_errorbar(aes(ymin=avgVM-steVM, ymax=avgVM+steVM), width=0.1) +
+  ylim(-2,2) +
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("max FitCurves in each block")
+
+
+### get max of each VM in a block
+MaxPeakCurve <- ddply(vonFitCurve, .(Voxel, Block, FitVM), summarise,
+                  maxPeak = max(value))
+dev.new()
+ggplot(data=MaxPeakCurve, aes(x=as.numeric(FitVM), y=maxPeak)) +
+  theme_few() + 
+  facet_wrap(Voxel~Block) + 
+  #geom_errorbar(aes(ymin=avgVM-steVM, ymax=avgVM+steVM), width=0.1) +
+  #ylim(-2,2) +
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("max FitCurves in each block")
+
+### avg MaxPeak across all block
+avgMaxPeakCurve <- ddply(MaxPeakCurve, .(Voxel, FitVM), summarise,
+                         nlength = length(unique(Block)),
+                         avgmaxPeak=mean(maxPeak),
+                         stdPeak = sd(maxPeak)/sqrt(nlength))
+
+dev.new()
+ggplot(data=avgMaxPeakCurve, aes(x=as.numeric(FitVM), y=avgmaxPeak)) +
+  theme_few() + 
+  facet_wrap(~Voxel) + 
+  geom_errorbar(aes(ymin=avgmaxPeak-stdPeak, ymax=avgmaxPeak+stdPeak), width=0.1) +
+  #ylim(-2,2) +
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("avg max FitCurves across blocks")
+
+
+
+
+                         
+### plot each fixed fitting results in 32 blocks
+dev.new()
+ggplot(data=vonFitCurve, aes(x=as.numeric(SingleVolume), y=value, group=Block)) +
+  theme_few() + 
+  facet_wrap(Voxel~FitVM) + 
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("Each Fixed fitting results in 32 blocks")
+
+
+### plot max 13 curves across all blocks
+dev.new()
+ggplot(data=vonFitCurve_Avg, aes(x=as.numeric(SingleVolume), y=avgVM)) +
+  theme_few() + 
+  facet_wrap(Voxel~FitVM) + 
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("avg Fixed fitting across all blocks")
+
+
+
+```
+
+
+
+
+
+*** 1_step to fit VM model ***
+first, we fix the orientation tuning between [-2/pi 2/pi], like we can make 10 or 20 orientation tuning (need to check V1 or monkey studies), limit the range of base and amp, and then fit one VM function for many times (i.e. 1500), using randomly chosen inital seed values on each iteration (across the range of allowable values) to ensure the fitting algorithm did not settle in a local min. The set of parameters for each voxel that yielded the lowest root mean squared error across the i.e. 1500 iterations. In this case, we can remove negative signal to baseline (i.e. close to 0)   
+```{r VModel_1stStep}
+## Fitting the model to the data. The fit is done using nonlinear least squares
+vonMises_1stFitData <- function(inputData) ## time series
+  {
+  
+  allBlock <- list()
+  allfit2Vox <- list()
+  OrientFitPar <- list()
+  kk=0
+  for (ixVoxel in levels(droplevels(as.factor(inputData$Voxel)))) {
+    kk=kk+1
+    for (ixBlock in levels(droplevels(as.factor(inputData$Block)))){
+      oneVoxelData <- subset(inputData, inputData$Voxel == ixVoxel & inputData$Block==ixBlock)
+      
+      Xtime <- oneVoxelData$SingleVolume
+      cat("Trial=", kk, "of", length(unique(datToFit$Voxel)), "\n")
+      print(paste("Voxel", ixVoxel))
+      print(paste("Block", ixBlock))
+    
+     oneVoxelTS <- oneVoxelData$zSigSM # smooth or raw signal
+      maxPeak <- round(max(oneVoxelTS))
+      minPeak <- round(min(oneVoxelTS))
+      mus <- seq(-pi/2,pi/2, length.out=13)
+      
+      for (ixOrient in mus){
+        
+        ixOrientSeq <- match(ixOrient, mus) # find index of mus for return VM data
+        # print(paste("ixOrient", ixOrient))
+        # random search range
+        guessBase <- c(0)
+        guessAmp <- c(-2,2) #seq(minPeak,maxPeak, by=0.005) #c(-3,3)
+        
+        guessKap <- 10*pi
+        
+        st1 <- data.frame(base = guessBase, amp = guessAmp, prefOr = ixOrient, kap = guessKap) 
+        alg <- "plinear-random" #"plinear-random"
+        maxIt <- 150 # for plinear-random
+        
+        resfit <- nls2(oneVoxelTS~Model_Pes(base,amp,prefOr, kap), 
+                       start=st1, algorithm=alg,trace=FALSE,
+                       control=nls.control(maxiter= maxIt, minFactor=1/1024,  warnOnly=TRUE)) 
+        
+        OrientFitPar[[ixOrientSeq]] <- predict(resfit)
+        
+        }
+      allBlock[[ixBlock]] <- list("Block" = ixBlock, OrientFitPar)
+      
+      } # for ixBlock
+    
+    allfit2Vox[[ixVoxel]] <- list("Voxel" = ixVoxel, allBlock)
+    
+    } # for ixVoxel
+  
+  return(allfit2Vox)
+  
+  }
+```
+
+
+*** VonMises function ***
+Using Pestilli's paper
+```{r VMfun2Step1}
+    Model_Pes <- function (base,amp,prefOr, kap)
+      {
+      #browser()
+      orientations <- seq(-pi/2, pi/2, length.out = 9)
+      #circularNormal <- base + dvm(orientations, prefOr1, kap1)
+      circularNormal <- base + amp * exp(kap * (2*cos(orientations-prefOr) - 1))  ## Pestilli et al, 2009 paper.
+      }    
+```
+
+
+
+
+
+

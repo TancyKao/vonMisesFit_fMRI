@@ -1,0 +1,60 @@
+---
+title: "vonMisesModel_megFitAnovaCorrR2"
+##using after "OddEvenBlockCorr.Rmd & OrientPreferAnovaTest.Rmd" ##
+##merge FitCurve, Anova, Corr, r2 of each voxel##
+
+---
+
+
+```{r loadDat}
+rm(list = ls())
+
+rawData <- read.csv('/Users/tancy/Dropbox/fmridata_r/fMRI_CVS_Data/SigCh_HighRes/SigCh_HighRes_8s2.csv') # load raw data
+#BRtestData <- droplevels(subset(rawData, Subj=="S07" & ROIs=="rOFA", select = -c(orient30, orient45, ampval, phval, covval))) # lowrew
+BRtestData <- droplevels(subset(rawData, Subj=="S06", select = -c(orient45, ampval, phval, covval))) # highres
+
+vonFitCurve <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/HighRes/fitVM_Stp1_S06_8s_sm_HR_kap10pi.csv') # load fitted data
+
+aovVox <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/repAnova/S06_HR_repAov_8s_sm_kap10pi.csv')
+
+VoxCorrTest <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/TrialCorr/S06_HR_TrialCorr_8s_sm_kap10pi.csv')
+
+saveName <- '/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp1_megData/fitVM_Stp1_S06_HR_8s_sm_kap10pi_meg.csv'
+
+##for highRes data
+BRtestData$ROIs <- "HR_rOFA"
+vonFitCurve$ROIs <- "HR_rOFA"
+aovVox$ROIs <- "HR_rOFA"
+VoxCorrTest$ROIs <- "HR_rOFA"
+
+head(BRtestData)
+head(vonFitCurve)
+head(aovVox)
+head(VoxCorrTest)
+```
+
+
+```{r megAll}
+r2Vox <- ddply(BRtestData, .(Voxel, ROIs), summarise,
+               r2 = r2[1])
+
+vonFitCurve$FitVM2 <- vonFitCurve$FitVM
+vonFitCurve$FitVM2 <- as.factor(vonFitCurve$FitVM2)
+vonFitCurve$FitVM2 = factor(vonFitCurve$FitVM2, levels = c("1", "2","3", "4", "5", "6", "7","8","9","10","11","12","13"))  
+levels(vonFitCurve$FitVM2) <- c("1","1","4", "4", "4", "7", "7","7","10","10","10","13","13") # set 5 preferred orientations
+
+# # remove those voxels contains 5% amp
+maxValjudge <- ddply(vonFitCurve, .(Subj, ROIs, Voxel), summarise,
+                     maxValue = unique(max(avgValue)),
+                     prefOrient = Orient[avgValue==maxValue],
+                     maxSel = ifelse(maxValue < 0.5, 1, 0))
+
+# merge all dataframes # make sure same nrow
+vox_r2FvalCorr <- Reduce(function(x, y) merge(x, y, all=TRUE), list(vonFitCurve, maxValjudge, r2Vox, aovVox, VoxCorrTest))
+
+head(vox_r2FvalCorr)
+
+write.csv(vox_r2FvalCorr, file = saveName, row.names= FALSE)
+
+```
+

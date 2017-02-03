@@ -1,0 +1,278 @@
+---
+title: "vonMisesModel_1stStepCheck"
+##using after "vonMisesModel_1stStepFitData_trails.Rmd" ##
+##check fitting curve vs. original BOLD signal##
+
+---
+
+**** load fitted data ****
+```{r loadDemoDat}
+rm(list=ls())
+library(pracma)
+library(ggplot2)
+library(ggthemes)
+#library(nlme)
+library(plyr)
+library(reshape2)
+#library(circular)
+#library(CircStats)
+#library(stats4)
+#library(bbmle)
+library(proto)
+library(nls2)
+library(scales)
+#library(minpack.lm)
+library(gridExtra)
+options(device='quartz') # open new plot window
+#setwd("~/Dropbox/withArman/FFTvoxel") # working directory
+setwd("/Users/tancy/Dropbox/fmridata_r") # working directory
+
+rawData <- read.csv('/Users/tancy/Dropbox/fmridata_r/fMRI_CVS_Data/SigCh_SameFaceWR/SigChWR_OrientDataAll_S07_8s.csv') # load raw data
+vonFitCurve <- read.csv('/Users/tancy/Dropbox/fmridata_r/FFTdata/Stp2_megData/fitVM_Stp2_S07_rOFA_8s_sm_kap10pi.csv') # load fitted data
+
+
+#rawData$ROIs <- "HR_rOFA" # for highRes
+
+# select single subject data and drop unuseful columns
+# BRtestData <- droplevels(subset(rawData, Subj=="S03" & ROIs=="HR_rOFA", select = -c(orient45, ampval, phval, covval))) # for high res
+
+BRtestData <- droplevels(subset(rawData, ROIs=="rOFA", select = -c(orient30, orient45, ampval, phval, covval))) # for low res
+
+
+# create a new dataframe for model fitting of each block
+Block_fun <- function(x, y) rep(1:x, each = length(unique(y)))
+
+# get number of blocks in each voxel
+VoxBlock <- droplevels(ddply(BRtestData, .(Voxel, ROIs), summarise,
+                                nblock = length(SingleVolume)/length(unique(SingleVolume))))
+
+# generate a data with sequence of blocks and sequence of HRF                
+NewBRtestData <- droplevels(ddply(BRtestData, .(Voxel, ROIs), transform,
+                               Block = Block_fun(VoxBlock$nblock[1], SingleVolume),
+                               seqHRF = seq(1, length(HRF))))
+head(NewBRtestData)
+
+
+vonFitCurve2 <- droplevels(subset(vonFitCurve, md=='1', select= -c(Res.Df,Res.Sum.Sq,Df,Sum.Sq,F.value,Pr..F.,logQ,df.logQ,chiP,loglik,numPar,AICc)))
+  
+vonFitCurve3 <- vonFitCurve2[!duplicated(vonFitCurve2),]
+
+# get same length between raw data and fitting data for overlap curve plot
+vonFitCurve3$FitVM2 <- rep(seq(1,31, length.out=13), length(unique(vonFitCurve3$Voxel)))
+vonFitCurve3 <- arrange(vonFitCurve3, Voxel, FitVM)
+
+#vonFitCurve$FitVM2 <- rep(seq(1,9, length.out=13), length(unique(vonFitCurve$Voxel)))
+
+
+
+```
+
+*** temporal smoothing TS and zdata for raw data***
+```{r smoothTS_zdata}
+## smooth data ##
+VolSMdata <- droplevels(ddply(NewBRtestData, .(Voxel, ROIs), function(datTS){
+  #browser()
+  smTS <- ts(datTS$HRF, start=1, frequency=length(unique(NewBRtestData$Block)))
+  linfitTS <- filter(smTS, filter=rep(1/5,5), method="conv", side=2) # apply moving average # lowRes
+  #linfitTS <- filter(smTS, filter=rep(1/3,3), method="conv", side=2) # apply moving average # highRes
+  linfitTS[is.na(linfitTS)] <- mean(linfitTS, na.rm=TRUE)
+  seqHRF <- datTS$seqHRF
+  linBind <- cbind(seqHRF, linfitTS)  
+  }))
+
+# merge with original data
+NewBRtestData_SM <- merge(NewBRtestData, VolSMdata, by=c("Voxel","ROIs","seqHRF"))
+NewBRtestData_SM <- arrange(NewBRtestData_SM,Voxel,ROIs,seqHRF)
+head(NewBRtestData_SM)
+
+## get zScore for sm raw data ##
+Zdata <- droplevels(ddply(NewBRtestData_SM, .(Voxel, ROIs), transform,
+                          zSigCh = scale(HRF),
+                          zSigSM = scale(linfitTS)))
+head(Zdata)
+#hist(Zdata$zSigCh) # plot histogram
+
+avgZSigCh <- droplevels(ddply(Zdata, .(Voxel, ROIs, SingleVolume), summarise,
+                              nlength = length(unique(Block)),
+                              r2 = mean(r2),
+                              avgSigCh = mean(zSigCh),
+                              avgSigSM = mean(zSigSM),
+                              steSigCh = sd(zSigCh)/sqrt(nlength),
+                              steSigSM = sd(zSigSM)/sqrt(nlength)))
+
+#rm(list=c("rawData", "BRtestData", "VolSMdata", "NewBRtestData", "NewBRtestData_SM"))
+   
+```
+
+
+*** compute raw signal and fitting results within each voxel ***
+*** should compute significant voxels ***
+```{r KStestRawFit}
+
+datToComp <- droplevels(subset(avgZSigCh))
+CompResult <- TwoSampComp(datToComp)
+
+
+CompResultAll <- data.frame()
+for (iVox in 1:length(CompResult)){
+  IdvCurve <-  data.frame(do.call(rbind, lapply(1:length(CompResult[[iVox]][[1]]), function(meg) 
+    cbind(CompResult[[iVox]]$Voxel, CompResult[[iVox]][[1]], CompResult[[iVox]][[2]],CompResult[[iVox]][[3]]))),stringsAsFactors=FALSE)
+  CompResultAll <- rbind(CompResultAll,IdvCurve)
+}   
+
+CompResultAll$X1 <- NULL
+# modify the column names of each dataframe
+colnames(CompResultAll) <- c("Voxel", "r2", "pVal")
+
+# transform some variables as numeric format
+CompResultAll$Voxel <- as.factor(CompResultAll$Voxel)
+CompResultAll$r2 <- as.numeric(CompResultAll$r2)
+CompResultAll$pVal <- as.numeric(CompResultAll$pVal)
+
+sum(ifelse(CompResultAll$pVal>0.05,0,1))
+
+
+# hypothesis whether two samples are from same population
+TwoSampComp <- function(inputData){
+  KSData <- list()
+  for (ixVoxel in levels(droplevels(as.factor(inputData$Voxel)))) {
+    #browser()
+    oneVoxRaw <- subset(inputData, inputData$Voxel == ixVoxel)
+    RawSig <- oneVoxRaw$avgSigSM
+    oneVoxFit <- vonFitCurve3[vonFitCurve3$Voxel %in% oneVoxRaw$Voxel, ] # get same voxels from avgZSigChSel
+    FitSig <- oneVoxFit$avgValue
+    ksResult <- ks.test(RawSig, FitSig)
+    
+    KSData[[ixVoxel]] <- list("Voxel" = ixVoxel, unique(oneVoxRaw$r2), ksResult$p.value)
+
+  }
+ return(KSData)
+}
+
+```
+
+
+*** plot all raw signal and fitting results of all voxel ***
+```{r plotVM}
+avgZSigCh$Voxel <- as.factor(avgZSigCh$Voxel)
+avgZSigChSel <- droplevels(subset(avgZSigCh, Voxel%in%c(18)))#,19,22,35)))#sample(levels(Voxel),10), r2>0.04)) # random select 10 voxels to plot
+maxAmpVMSel <- vonFitCurve3[vonFitCurve3$Voxel %in% avgZSigChSel$Voxel, ] # get same voxels from avgZSigChSel
+
+# avgZSigChSel$Voxel2 <- factor(avgZSigChSel$Voxel, c('15','20','22','25','34','105'))
+# maxAmpVMSel$Voxel2 <- factor(maxAmpVMSel$Voxel, c('15','20','22','25','34','105'))
+
+
+## plot original avg curve and fitted curve
+dev.new()
+ggplot(data=avgZSigChSel, aes(x=SingleVolume, y=avgSigSM)) +
+  theme_few() + 
+  facet_wrap(~Voxel,scale='free') + 
+  geom_line(color='green', size=0.5) +
+  geom_hline(aes(yintercept=0)) +
+  ylim(-1, 1.5) +
+  geom_errorbar(aes(ymin=avgSigSM-steSigSM, ymax=avgSigSM+steSigSM), color='gray', size=0.01) +
+  geom_line(data=maxAmpVMSel, aes(x=FitVM2, y=avgValue),  color='red', size=1.5) +
+  #scale_colour_manual(values=c('green'='green', 'red'='red'), label=c('fitted curve', 'raw signal')) +
+  ylab("signal change % (normalized)") +
+  xlab("Volumes")
+  
+### recover the signal from max amp of each VM fitting
+dev.new()
+ggplot(data=maxAmpVMSel, aes(x=FitVM, y=avgValue)) +
+  theme_few() + 
+  facet_wrap(~Voxel, scale='free') + 
+  geom_errorbar(aes(ymin=avgValue-stePeak, ymax=avgValue+stePeak), width=0.1) +
+  geom_line(color='green') +
+  geom_point(stat='identity') +
+  geom_hline(aes(yintercept=0)) +
+  ylim(-1, 1) +
+  #scale_x_continuous(breaks=c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi), labels=rad2deg(c(-pi, -pi/2, -pi/4, 0, pi/4, pi/2, pi))) +
+  ylab("Max Amp from models") 
+
+
+# RepVoxels <- droplevels(subset(rawData, Voxel%in%c(18,19,22,35)))
+# write.csv(RepVoxels, file='/Users/tancy/Dropbox/fmridata_r/FFTvoxel/FFTtestRepVoxels_S07CSR.csv', row.names = FALSE)
+
+```
+
+
+**** check single trial fitting ****
+```{r plotSingleTrialVM}
+####################################
+## BOLD resp of each block of a voxel
+singleVox <- droplevels(subset(Zdata, Voxel==19))
+singleVoxAvg <- droplevels(subset(avgZSigChSel, Voxel==19))
+dev.new()
+ggplot(data=singleVox, aes(x=SingleVolume, y=zSigSM)) +
+  theme_few() + 
+  facet_wrap(Voxel~Block) + 
+  geom_line(color='red') +
+  geom_point(color='black',size=1) +
+  geom_hline(aes(yintercept=0)) +
+  #geom_errorbar(aes(ymin=avgSigSM-steSigSM, ymax=avgSigSM+steSigSM), width=0.1) +
+  ylab("signal change % (normalized)") +
+  ggtitle("original BOLD resp in each block")
+
+## 13 fit curve in each block
+vonFitCurve3$Block <- as.numeric(vonFitCurve3$Block)
+dev.new()
+ggplot(data=subset(vonFitCurve, Voxel==19), aes(x=as.numeric(SingleVolume), y=value, group=FitVM)) +
+  theme_few() + 
+  #facet_wrap(Voxel~Block) + 
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("13 FitCurves in each block")
+  
+## avg fit curve in each block
+dev.new()
+ggplot(data=maxPeakVM_Block, aes(x=as.numeric(FitVM), y=Value)) +
+  theme_few() + 
+  facet_wrap(Voxel~Block) + 
+  geom_line(color='green') +
+  geom_hline(aes(yintercept=0)) +
+  ggtitle("avg FitCurves in each block")
+
+############################################
+#### average across all blocks #####
+## raw signal of a voxel ##
+dev.new()
+ggplot(data=avgZSigChSel2, aes(x=SingleVolume, y=avgSigSM)) +
+  theme_few() + 
+  facet_wrap(~Voxel) + 
+  geom_line(color='red') +
+  geom_hline(aes(yintercept=0)) +
+  ylim(-1.5, 1.5) +
+  geom_errorbar(aes(ymin=avgSigSM-steSigSM, ymax=avgSigSM+steSigSM), width=0.1) +
+  ylab("Raw signal change % (normalized)") 
+
+
+## avg MaxPeak across all block
+dev.new()
+ggplot(data=MaxPeakVM_avg, aes(x=Orient, y=avgValue)) +
+  theme_few() + 
+  facet_wrap(~Voxel) + 
+  geom_line(color='green') +
+  geom_point(color='black') +
+  geom_errorbar(aes(ymin=avgValue-stePeak, ymax=avgValue+stePeak), width=0.01) +
+  ylim(-1,1.5) +
+  geom_hline(aes(yintercept=0)) 
+
+grid.arrange(p3,p4, ncol=1)
+
+
+####################################################
+#### single fitting within a block #####
+## Raw BOLD in the demo block
+datToFit_block <- subset(datToFit, Block==1) # get demo block from previous plots
+vonFitCurve_block <- subset(vonFitCurve, Block==1)
+dev.new()
+ggplot(data=vonFitCurve_block, aes(x=as.numeric(SingleVolume), y=value)) +
+  theme_few() + 
+  facet_wrap(~FitVM, scale='free') + 
+  geom_line(color='green', size=1) +
+  ylim(-2,2) +
+  geom_line(data=datToFit_block, aes(y=zSigSM),  color='red') +
+  geom_point(data=datToFit_block, aes(y=zSigSM), color='black',size=1) +
+  geom_hline(aes(yintercept=0), linetype="dotted") +
+  ggtitle("13 FitCurves for block***")
+```
