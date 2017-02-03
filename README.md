@@ -18,5 +18,5 @@ merge FitCurve, Anova, Corr, r2 of each voxel <br />
 *vonMisesModel_FitSummary.Rmd* <br />
 summary and plot all 1st fitted results of all subjects <br />
 
-*vonMisesModel_2rdFitSummary.Rmd*
+*vonMisesModel_2rdFitSummary.Rmd*<br />
 summary and plot all 2rd fitted results of all subjects <br />
